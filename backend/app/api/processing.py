@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -26,6 +26,15 @@ def create_processing_job(
 
     job = processing_service.create_job(db, payload, background_tasks)
     return job
+
+
+@router.get("", response_model=list[ProcessingJobOut])
+def list_processing_jobs(
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+) -> list[ProcessingJobOut]:
+    return processing_service.list_jobs(db, limit=limit, offset=offset)
 
 
 @router.get("/{job_id}", response_model=ProcessingJobOut)

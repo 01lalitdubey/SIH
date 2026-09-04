@@ -183,3 +183,63 @@ def test_process_job_not_found(client):
 def test_result_not_found_for_unknown_job(client):
     resp = client.get(f"/api/v1/results/{uuid.uuid4()}")
     assert resp.status_code == 404
+
+
+def test_list_processing_jobs(client, sample_image_bytes):
+    image = client.post(
+        "/api/v1/images/upload",
+        files={"file": ("list-jobs.jpg", sample_image_bytes, "image/jpeg")},
+    ).json()
+    created = client.post(
+        "/api/v1/process",
+        json={"image_id": image["id"], "analysis_name": "Listed Job", "scale_factor": 2},
+    ).json()
+
+    listing = client.get("/api/v1/process").json()
+    assert any(j["job_id"] == created["job_id"] for j in listing)
+
+
+def test_image_file_endpoint_serves_bytes(client, sample_image_bytes):
+    image = client.post(
+        "/api/v1/images/upload",
+        files={"file": ("serve-me.jpg", sample_image_bytes, "image/jpeg")},
+    ).json()
+
+    resp = client.get(f"/api/v1/images/{image['id']}/file")
+    assert resp.status_code == 200
+    assert resp.content == sample_image_bytes
+
+
+def test_result_file_endpoint_serves_output_image(client, sample_image_bytes):
+    image = client.post(
+        "/api/v1/images/upload",
+        files={"file": ("serve-output.jpg", sample_image_bytes, "image/jpeg")},
+    ).json()
+    job = client.post(
+        "/api/v1/process",
+        json={"image_id": image["id"], "analysis_name": "Serve Output", "scale_factor": 2},
+    ).json()
+
+    resp = client.get(f"/api/v1/results/{job['job_id']}/file")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "image/png"
+    assert len(resp.content) > 0
+
+
+def test_result_file_404_for_aoi_only_job(client):
+    job = client.post(
+        "/api/v1/process",
+        json={
+            "analysis_name": "No file expected",
+            "scale_factor": 2,
+            "aoi": {"north": 1, "south": 0, "east": 1, "west": 0},
+        },
+    ).json()
+
+    resp = client.get(f"/api/v1/results/{job['job_id']}/file")
+    assert resp.status_code == 404
+
+
+def test_image_file_not_found(client):
+    resp = client.get(f"/api/v1/images/{uuid.uuid4()}/file")
+    assert resp.status_code == 404

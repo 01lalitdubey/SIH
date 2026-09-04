@@ -1,9 +1,11 @@
 # SRM Platform — Backend
 
 FastAPI backend for the Deep Learning Based Super Resolution Mapping
-platform. This phase (Phase 3) builds the backend foundation only:
-database, image upload, and a **mocked** processing pipeline. No AI, no
-satellite APIs — see [Mocked vs Real](#mocked-vs-real) below.
+platform. Phase 3 built the backend foundation (database, image upload, a
+**mocked** processing pipeline); Phase 4 connects the existing frontend to
+it (real uploads, real job polling, file-serving endpoints for the
+before/after slider). No AI, no satellite APIs yet — see
+[Mocked vs Real](#mocked-vs-real) below.
 
 ## Stack
 
@@ -58,6 +60,12 @@ docker compose up -d
 If you'd rather use your own PostgreSQL server, just create a database and
 point `DATABASE_URL` at it (see below) — nothing in the app assumes Docker.
 
+> **SQLite fallback:** if Postgres/Docker genuinely isn't available, you can
+> point `DATABASE_URL` at `sqlite:///./dev.db` instead. This works because
+> of the cross-dialect `GUID` column type (`app/core/types.py`) — the same
+> models, same code, no changes needed. Treat this as a stopgap for local
+> dev only, not a replacement for Postgres in the stated architecture.
+
 ### 3. Environment configuration
 
 ```bash
@@ -102,9 +110,17 @@ All endpoints are prefixed with `/api/v1`.
 | POST | `/images/upload` | Upload an image (multipart) |
 | GET | `/images` | List uploaded images |
 | GET | `/images/{image_id}` | Get one image's metadata |
+| GET | `/images/{image_id}/file` | Serve the original image bytes (for `<img src>`) |
 | POST | `/process` | Create a processing job (mocked pipeline) |
+| GET | `/process` | List processing jobs (newest first) |
 | GET | `/process/{job_id}` | Poll job status/progress/stage |
 | GET | `/results/{job_id}` | Get a completed job's mock metrics |
+| GET | `/results/{job_id}/file` | Serve the mock output image bytes |
+
+The `/file` endpoints exist so the frontend never has to consume a raw
+filesystem path directly — they look up the file by DB-verified id and
+stream it via `FileResponse`, so a client can't request an arbitrary path
+off disk.
 
 Full request/response schemas are in Swagger at `/docs`.
 
@@ -176,3 +192,19 @@ development of this phase, via `curl`:
     file confirmed on disk, `output_width`/`output_height` matched
     `input × scale_factor`, metrics present and `is_mock: true`
 11. AOI-only job (no `image_id`) → completed with mock metrics, `output_path: null`
+
+## Phase 4 integration notes
+
+Two additions exist specifically to support the frontend:
+
+- `GET /process` (list) — the Dashboard needs job history; there was no
+  "list all jobs" endpoint before this phase.
+- `GET /images/{id}/file` and `GET /results/{job_id}/file` — the before/
+  after slider needs browser-loadable image URLs; the JSON responses only
+  ever contained server-side filesystem paths, which a browser can't load
+  directly.
+
+Full browser-to-database-to-browser verification (upload, AOI job, live
+stage polling, completion, failure demo, invalid upload, nonexistent job,
+backend-unavailable) was run against this backend from the frontend — see
+`frontend/README.md` (Phase 4 section) for that test log.

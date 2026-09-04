@@ -1,6 +1,7 @@
 import uuid
 
 from fastapi import BackgroundTasks
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.processing_job import JobStatus, ProcessingJob
@@ -35,3 +36,13 @@ def create_job(
 
 def get_job(db: Session, job_id: uuid.UUID) -> ProcessingJob | None:
     return db.get(ProcessingJob, job_id)
+
+
+def list_jobs(db: Session, limit: int = 50, offset: int = 0) -> list[ProcessingJob]:
+    stmt = (
+        select(ProcessingJob)
+        .order_by(ProcessingJob.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    return list(db.scalars(stmt).all())

@@ -1,6 +1,8 @@
 import uuid
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -44,3 +46,19 @@ def get_image(image_id: uuid.UUID, db: Session = Depends(get_db)) -> ImageOut:
     if image is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Image not found")
     return image
+
+
+@router.get("/{image_id}/file")
+def get_image_file(image_id: uuid.UUID, db: Session = Depends(get_db)) -> FileResponse:
+    """Serves the stored image bytes by DB-verified id — never trusts a raw
+    filesystem path from the client, so this can't be used for path
+    traversal the way exposing `file_path` directly as a URL would be."""
+    image = image_service.get_image(db, image_id)
+    if image is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Image not found")
+
+    path = Path(image.file_path)
+    if not path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Image file missing")
+
+    return FileResponse(path, media_type=image.file_type, filename=image.filename)

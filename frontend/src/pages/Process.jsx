@@ -7,9 +7,11 @@ import {
   Loader2,
   MapPinned,
   UploadCloud,
+  XCircle,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { createProcessingJob, uploadImage } from "../api/client";
 import IndeterminateBar from "../components/common/IndeterminateBar";
 import PageHeader from "../components/layout/PageHeader";
 import AOIMap from "../components/process/AOIMap";
@@ -18,7 +20,9 @@ import Button from "../components/ui/Button";
 import Card, { CardHeader } from "../components/ui/Card";
 import ImageContainer from "../components/ui/ImageContainer";
 import Modal from "../components/ui/Modal";
+import { useProcessingPoll } from "../hooks/useProcessingPoll";
 import { cn } from "../lib/cn";
+import { stageKeyToIndex, toProcessingUiStatus } from "../lib/jobStatus";
 
 const SOURCE_TABS = [
   { id: "upload", label: "Upload Image", icon: ImageIcon },
@@ -26,10 +30,6 @@ const SOURCE_TABS = [
 ];
 
 const SCALE_OPTIONS = [2, 4];
-const STAGE_DURATION_MS = 750;
-// The stage a "simulate failure" run stops at, purely to demonstrate the
-// error state of the processing UI — not a real failure condition.
-const MOCK_FAILURE_STAGE = 2;
 
 export default function Process() {
   const navigate = useNavigate();
@@ -38,36 +38,46 @@ export default function Process() {
   const [sourceTab, setSourceTab] = useState("upload");
   const [file, setFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
-  // "empty" | "uploading" | "loaded" — purely a local UI sequence; nothing
-  // is actually transmitted anywhere until Phase 4's backend integration.
+  const [imageId, setImageId] = useState(null);
+  // "empty" | "uploading" | "loaded" | "error"
   const [uploadStage, setUploadStage] = useState("empty");
+  const [uploadError, setUploadError] = useState(null);
   const [dragActive, setDragActive] = useState(false);
   const [aoi, setAoi] = useState(null);
   const [jobName, setJobName] = useState("");
   const [scaleFactor, setScaleFactor] = useState(4);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState(null);
 
   // "form" | "processing"
   const [view, setView] = useState("form");
-  const [stageIndex, setStageIndex] = useState(0);
-  const [status, setStatus] = useState("processing"); // "processing" | "completed" | "error"
+  const [jobId, setJobId] = useState(null);
   const shouldFailRef = useRef(false);
 
-  const canSubmit = useMemo(() => {
-    const hasSource = sourceTab === "upload" ? uploadStage === "loaded" : Boolean(aoi);
-    return hasSource && jobName.trim().length > 0;
-  }, [sourceTab, uploadStage, aoi, jobName]);
+  const { job, error: pollError } = useProcessingPoll(view === "processing" ? jobId : null);
 
-  function ingestFile(selected) {
+  const canSubmit = useMemo(() => {
+    const hasSource =
+      sourceTab === "upload" ? uploadStage === "loaded" && Boolean(imageId) : Boolean(aoi);
+    return hasSource && jobName.trim().length > 0;
+  }, [sourceTab, uploadStage, imageId, aoi, jobName]);
+
+  async function ingestFile(selected) {
     setFile(selected);
+    setImageId(null);
     setUploadStage("uploading");
-    // MOCK/TEMPORARY — simulates local upload latency so the empty ->
-    // uploading -> loaded sequence is visible; no network transfer happens
-    // yet (that's Phase 4).
-    setTimeout(() => {
+    setUploadError(null);
+
+    try {
+      const image = await uploadImage(selected);
       setPreviewUrl(URL.createObjectURL(selected));
+      setImageId(image.id);
       setUploadStage("loaded");
-    }, 700);
+    } catch (err) {
+      setUploadStage("error");
+      setUploadError(err.message);
+    }
   }
 
   function handleFileChange(e) {
@@ -87,51 +97,54 @@ export default function Process() {
   function resetUpload() {
     setFile(null);
     setPreviewUrl(null);
+    setImageId(null);
+    setUploadError(null);
     setUploadStage("empty");
   }
 
-  function startProcessing(simulateFailure) {
+  async function runAnalysis(simulateFailure) {
     shouldFailRef.current = simulateFailure;
-    setStageIndex(0);
-    setStatus("processing");
-    setView("processing");
+    setSubmitError(null);
+    setSubmitting(true);
+    try {
+      const payload = {
+        analysis_name: jobName,
+        scale_factor: scaleFactor,
+        simulate_failure: simulateFailure,
+      };
+      if (sourceTab === "upload") {
+        payload.image_id = imageId;
+      } else {
+        payload.aoi = aoi;
+      }
+
+      const created = await createProcessingJob(payload);
+      setJobId(created.job_id);
+      setView("processing");
+    } catch (err) {
+      setSubmitError(err.message);
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   function handleConfirmRun() {
     setConfirmOpen(false);
-    startProcessing(false);
+    runAnalysis(false);
   }
 
   function handleRetry() {
-    startProcessing(shouldFailRef.current);
+    runAnalysis(shouldFailRef.current);
   }
 
-  // MOCK/TEMPORARY — advances through pipeline stages on a timer instead of
-  // real backend progress events. Replaced by real job-status polling in
-  // Phase 4, driven by actual inference progress from Phase 6 onward.
   useEffect(() => {
-    if (view !== "processing" || status !== "processing") return undefined;
-
-    const timer = setTimeout(() => {
-      if (shouldFailRef.current && stageIndex === MOCK_FAILURE_STAGE) {
-        setStatus("error");
-        return;
-      }
-      if (stageIndex < STAGE_LABELS.length - 1) {
-        setStageIndex((i) => i + 1);
-      } else {
-        setStatus("completed");
-      }
-    }, STAGE_DURATION_MS);
-
+    if (job?.status !== "completed") return undefined;
+    const timer = setTimeout(() => navigate(`/results/${job.job_id}`), 1000);
     return () => clearTimeout(timer);
-  }, [view, status, stageIndex]);
+  }, [job, navigate]);
 
-  useEffect(() => {
-    if (status !== "completed") return undefined;
-    const timer = setTimeout(() => navigate("/results/job-1042"), 1000);
-    return () => clearTimeout(timer);
-  }, [status, navigate]);
+  const uiStatus = pollError ? "error" : job ? toProcessingUiStatus(job.status) : "processing";
+  const uiStageIndex = job ? stageKeyToIndex(job.current_stage) : -1;
 
   return (
     <AnimatePresence mode="wait">
@@ -147,19 +160,21 @@ export default function Process() {
         <PageHeader
           title={jobName || "New Analysis"}
           description={
-            status === "error"
-              ? "Processing failed (mock)."
-              : status === "completed"
-                ? "Processing complete — redirecting to results…"
-                : "Running the (mocked) super-resolution pipeline."
+            pollError
+              ? "Lost contact with the backend."
+              : job?.status === "failed"
+                ? "Processing failed."
+                : job?.status === "completed"
+                  ? "Processing complete — redirecting to results…"
+                  : "Running the super-resolution pipeline."
           }
         />
 
         <Card>
-          <ProcessingStages stageIndex={stageIndex} status={status} />
+          <ProcessingStages stageIndex={uiStageIndex} status={uiStatus} />
 
           <AnimatePresence mode="wait">
-            {status === "completed" && (
+            {job?.status === "completed" && (
               <motion.div
                 key="completed"
                 initial={{ opacity: 0, y: 8 }}
@@ -171,16 +186,17 @@ export default function Process() {
               </motion.div>
             )}
 
-            {status === "error" && (
+            {job?.status === "failed" && (
               <motion.div
-                key="error"
+                key="failed"
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 className="mt-6 space-y-3"
               >
                 <div className="flex items-center gap-2 rounded-lg border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger">
                   <AlertTriangle className="size-4 shrink-0" aria-hidden="true" />
-                  Stage "{STAGE_LABELS[stageIndex]}" failed (mock failure for demo purposes).
+                  {job.error_message ||
+                    `Stage "${STAGE_LABELS[uiStageIndex] ?? "unknown"}" failed.`}
                 </div>
                 <div className="flex gap-3">
                   <Button size="sm" onClick={handleRetry}>
@@ -190,6 +206,25 @@ export default function Process() {
                     Back to Form
                   </Button>
                 </div>
+              </motion.div>
+            )}
+
+            {pollError && (
+              <motion.div
+                key="poll-error"
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="mt-6 space-y-3"
+              >
+                <div className="flex items-center gap-2 rounded-lg border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger">
+                  <XCircle className="size-4 shrink-0" aria-hidden="true" />
+                  {pollError.isNetworkError
+                    ? "Couldn't reach the backend to check status. It may be offline."
+                    : pollError.message}
+                </div>
+                <Button size="sm" variant="secondary" onClick={() => setView("form")}>
+                  Back to Form
+                </Button>
               </motion.div>
             )}
           </AnimatePresence>
@@ -210,7 +245,7 @@ export default function Process() {
 
       <div className="rounded-lg border border-warning/30 bg-warning-soft px-4 py-3 text-sm text-warning">
         <Info className="mr-2 inline size-4" aria-hidden="true" />
-        Processing is mocked in this phase — no image is actually sent anywhere yet.
+        Processing runs on the backend's mock pipeline — no real AI model yet.
       </div>
 
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
@@ -296,9 +331,24 @@ export default function Process() {
                       >
                         <Loader2 className="size-6 animate-spin text-accent" aria-hidden="true" />
                         <p className="text-sm font-medium text-text-primary">
-                          Reading {file?.name}&hellip;
+                          Uploading {file?.name}&hellip;
                         </p>
                         <IndeterminateBar className="w-40" />
+                      </motion.div>
+                    ) : uploadStage === "error" ? (
+                      <motion.div
+                        key="error"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="flex flex-col items-center justify-center gap-3 rounded-lg border border-danger/40 bg-danger-soft px-6 py-14 text-center"
+                      >
+                        <XCircle className="size-6 text-danger" aria-hidden="true" />
+                        <p className="text-sm font-medium text-text-primary">Upload failed</p>
+                        <p className="max-w-sm text-xs text-danger">{uploadError}</p>
+                        <Button size="sm" variant="secondary" onClick={resetUpload}>
+                          Try again
+                        </Button>
                       </motion.div>
                     ) : (
                       <motion.div
@@ -334,7 +384,7 @@ export default function Process() {
                         <p className="text-sm font-medium text-text-primary">
                           {dragActive ? "Drop to upload" : "Drag & drop imagery, or click to browse"}
                         </p>
-                        <p className="text-xs text-text-muted">GeoTIFF, JPEG, PNG supported</p>
+                        <p className="text-xs text-text-muted">JPG, PNG, WEBP, TIFF supported</p>
                       </motion.div>
                     )}
                   </AnimatePresence>
@@ -411,9 +461,17 @@ export default function Process() {
                 </div>
               </div>
 
+              {submitError && (
+                <div className="flex items-start gap-2 rounded-lg border border-danger/30 bg-danger-soft px-3 py-2 text-xs text-danger">
+                  <XCircle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+                  {submitError}
+                </div>
+              )}
+
               <Button
                 onClick={() => setConfirmOpen(true)}
                 disabled={!canSubmit}
+                loading={submitting}
                 className="mt-2 w-full"
               >
                 Run Analysis
@@ -421,8 +479,9 @@ export default function Process() {
 
               {canSubmit && (
                 <button
-                  onClick={() => startProcessing(true)}
-                  className="text-center text-xs text-text-muted underline-offset-2 hover:text-danger hover:underline"
+                  onClick={() => runAnalysis(true)}
+                  disabled={submitting}
+                  className="text-center text-xs text-text-muted underline-offset-2 hover:text-danger hover:underline disabled:opacity-50"
                 >
                   Simulate failure (demo)
                 </button>
@@ -436,7 +495,7 @@ export default function Process() {
         open={confirmOpen}
         onClose={() => setConfirmOpen(false)}
         title="Confirm analysis"
-        description="Review the details below before running the (mocked) pipeline."
+        description="Review the details below before running the pipeline."
         footer={
           <>
             <Button variant="secondary" onClick={() => setConfirmOpen(false)}>

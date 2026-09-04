@@ -3,16 +3,26 @@ import { MoveHorizontal, Satellite, Sparkles } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 import { cn } from "../../lib/cn";
 
-function Placeholder({ variant, label }) {
+function Placeholder({ variant, label, src }) {
   const isAfter = variant === "after";
+
   return (
     <div
       className={cn(
         "scan-grid-bg relative flex size-full flex-col items-center justify-center gap-2 text-text-muted",
-        isAfter && "brightness-110",
+        isAfter && !src && "brightness-110",
       )}
     >
-      {isAfter ? (
+      {src ? (
+        <motion.img
+          src={src}
+          alt={label}
+          className="absolute inset-0 size-full object-cover"
+          initial={isAfter ? { filter: "blur(6px)" } : false}
+          animate={isAfter ? { filter: "blur(0px)" } : undefined}
+          transition={{ duration: 1.1, delay: 0.3, ease: "easeOut" }}
+        />
+      ) : isAfter ? (
         <motion.div
           initial={{ filter: "blur(6px)" }}
           animate={{ filter: "blur(0px)" }}
@@ -27,7 +37,7 @@ function Placeholder({ variant, label }) {
           where the comparison handle clips this layer. */}
       <span
         className={cn(
-          "absolute top-2 max-w-[46%] truncate rounded-md border border-border-strong bg-bg/80 px-2 py-1 text-[11px] font-medium backdrop-blur sm:max-w-none sm:text-xs",
+          "absolute top-2 z-10 max-w-[46%] truncate rounded-md border border-border-strong bg-bg/80 px-2 py-1 text-[11px] font-medium backdrop-blur sm:max-w-none sm:text-xs",
           isAfter ? "right-2" : "left-2",
         )}
       >
@@ -38,6 +48,8 @@ function Placeholder({ variant, label }) {
 }
 
 export default function CompareSlider({
+  beforeSrc,
+  afterSrc,
   beforeLabel = "Before — Medium Resolution",
   afterLabel = "After — Super-Resolved (MOCK)",
   className,
@@ -85,14 +97,14 @@ export default function CompareSlider({
       onPointerLeave={stopDragging}
     >
       <div className="absolute inset-0">
-        <Placeholder variant="after" label={afterLabel} />
+        <Placeholder variant="after" label={afterLabel} src={afterSrc} />
       </div>
 
       <div
         className="absolute inset-0 overflow-hidden"
         style={{ clipPath: `inset(0 ${100 - position}% 0 0)` }}
       >
-        <Placeholder variant="before" label={beforeLabel} />
+        <Placeholder variant="before" label={beforeLabel} src={beforeSrc} />
       </div>
 
       <div

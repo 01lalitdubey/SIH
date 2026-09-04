@@ -1,7 +1,8 @@
 import { motion } from "framer-motion";
 import { CheckCircle2, Download, Gauge, Layers, Sparkles } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { getImageFileUrl, getProcessingStatus, getResult, getResultFileUrl } from "../api/client";
 import PageHeader from "../components/layout/PageHeader";
 import CompareSlider from "../components/results/CompareSlider";
 import Button from "../components/ui/Button";
@@ -11,7 +12,7 @@ import ErrorState from "../components/ui/ErrorState";
 import LoadingState from "../components/ui/LoadingState";
 import MetricCard from "../components/ui/MetricCard";
 import StatusBadge from "../components/ui/StatusBadge";
-import { getMockJobById } from "../data/mockJobs";
+import { toBadgeStatus } from "../lib/jobStatus";
 
 const listVariants = {
   hidden: {},
@@ -26,28 +27,62 @@ const itemVariants = {
 export default function Results() {
   const { jobId } = useParams();
   const navigate = useNavigate();
-  const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    setLoading(true);
-    // MOCK/TEMPORARY — simulates a fetch delay; replaced by a real API call in Phase 4.
-    const timer = setTimeout(() => setLoading(false), 500);
-    return () => clearTimeout(timer);
+  // "loading" | "error" | "ready"
+  const [phase, setPhase] = useState("loading");
+  const [job, setJob] = useState(null);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState(null);
+
+  const load = useCallback(async () => {
+    setPhase("loading");
+    setError(null);
+    try {
+      const jobData = await getProcessingStatus(jobId);
+      setJob(jobData);
+
+      if (jobData.status === "completed") {
+        const resultData = await getResult(jobId);
+        setResult(resultData);
+      }
+      setPhase("ready");
+    } catch (err) {
+      setJob(null);
+      setResult(null);
+      setError(err);
+      setPhase("error");
+    }
   }, [jobId]);
 
-  if (loading) {
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  if (phase === "loading") {
     return <LoadingState label="Loading analysis" />;
   }
 
-  const job = getMockJobById(jobId);
-
-  if (!job) {
+  if (phase === "error") {
+    if (error?.status === 404) {
+      return (
+        <ErrorState
+          title="Analysis not found"
+          description={`No analysis with id "${jobId}" exists.`}
+          onRetry={() => navigate("/dashboard")}
+          retryLabel="Back to Dashboard"
+        />
+      );
+    }
     return (
       <ErrorState
-        title="Analysis not found"
-        description={`No analysis with id "${jobId}" exists.`}
-        onRetry={() => navigate("/dashboard")}
-        retryLabel="Back to Dashboard"
+        title="Couldn't load this analysis"
+        description={
+          error?.isNetworkError
+            ? "Unable to reach the backend. Make sure it's running, then retry."
+            : error?.message || "An unexpected error occurred."
+        }
+        onRetry={load}
+        retryLabel="Retry"
       />
     );
   }
@@ -55,19 +90,21 @@ export default function Results() {
   return (
     <div>
       <PageHeader
-        title={job.name}
-        description={`${job.id} · ${job.scaleFactor}x scale factor`}
-        action={<StatusBadge status={job.status} />}
+        title={job.analysis_name}
+        description={`${job.job_id} · ${job.scale_factor}x scale factor`}
+        action={<StatusBadge status={toBadgeStatus(job.status)} />}
       />
 
       {job.status === "failed" ? (
         <ErrorState
           title="Analysis failed"
-          description="This mock job failed during processing. Try running a new analysis."
+          description={
+            job.error_message || "This job failed during processing. Try running a new analysis."
+          }
           onRetry={() => navigate("/process")}
           retryLabel="New Analysis"
         />
-      ) : job.status === "processing" ? (
+      ) : job.status === "queued" || job.status === "processing" ? (
         <EmptyState
           icon={Sparkles}
           title="Still processing"
@@ -92,7 +129,10 @@ export default function Results() {
           </motion.div>
 
           <motion.div variants={itemVariants}>
-            <CompareSlider />
+            <CompareSlider
+              beforeSrc={job.image_id ? getImageFileUrl(job.image_id) : undefined}
+              afterSrc={result?.output_path ? getResultFileUrl(job.job_id) : undefined}
+            />
             <p className="mt-2 text-center text-xs text-text-muted">
               Drag the handle to compare before and after
             </p>
@@ -103,25 +143,25 @@ export default function Results() {
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <MetricCard
                 label="PSNR"
-                value={job.metrics?.psnr}
+                value={result?.psnr}
                 decimals={1}
                 unit="dB"
                 icon={Gauge}
-                ringPercent={job.metrics ? Math.min(100, (job.metrics.psnr / 50) * 100) : undefined}
+                ringPercent={result?.psnr ? Math.min(100, (result.psnr / 50) * 100) : undefined}
               />
               <MetricCard
                 label="SSIM"
-                value={job.metrics?.ssim}
+                value={result?.ssim}
                 decimals={3}
                 icon={Layers}
-                ringPercent={job.metrics ? job.metrics.ssim * 100 : undefined}
+                ringPercent={result?.ssim ? result.ssim * 100 : undefined}
               />
               <MetricCard
                 label="LPIPS"
-                value={job.metrics?.lpips}
+                value={result?.lpips}
                 decimals={3}
                 icon={Sparkles}
-                ringPercent={job.metrics ? (1 - job.metrics.lpips) * 100 : undefined}
+                ringPercent={result?.lpips ? (1 - result.lpips) * 100 : undefined}
               />
             </div>
           </motion.div>
@@ -131,7 +171,9 @@ export default function Results() {
               <div>
                 <p className="text-sm font-medium text-text-primary">Download result</p>
                 <p className="text-xs text-text-muted">
-                  GeoTIFF export becomes available once the backend is connected.
+                  {result?.output_path
+                    ? "GeoTIFF export lands in a later phase — PNG preview only for now."
+                    : "No output file for this job (AOI-only jobs don't generate one yet)."}
                 </p>
               </div>
               <Button variant="secondary" icon={Download} disabled>
