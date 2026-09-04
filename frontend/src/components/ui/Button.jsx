@@ -1,4 +1,6 @@
+import { motion } from "framer-motion";
 import { Loader2 } from "lucide-react";
+import { useMemo } from "react";
 import { cn } from "../../lib/cn";
 
 const VARIANTS = {
@@ -27,9 +29,15 @@ export default function Button({
   children,
   ...props
 }) {
+  const MotionComponent = useMemo(() => motion.create(Component), [Component]);
+  const isDisabled = disabled || loading;
+
   return (
-    <Component
-      disabled={disabled || loading}
+    <MotionComponent
+      disabled={isDisabled}
+      whileHover={isDisabled ? undefined : { scale: 1.02 }}
+      whileTap={isDisabled ? undefined : { scale: 0.97 }}
+      transition={{ duration: 0.12 }}
       className={cn(
         "inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-colors duration-150",
         "disabled:cursor-not-allowed disabled:opacity-50",
@@ -46,6 +54,6 @@ export default function Button({
         Icon && <Icon className="size-4" aria-hidden="true" />
       )}
       {children}
-    </Component>
+    </MotionComponent>
   );
 }

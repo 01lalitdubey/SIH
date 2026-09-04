@@ -1,12 +1,25 @@
+import { motion } from "framer-motion";
 import { cn } from "../../lib/cn";
+import AnimatedNumber from "./AnimatedNumber";
 
-export default function MetricCard({ label, value, unit, icon: Icon, hint, className }) {
+export default function MetricCard({
+  label,
+  value,
+  unit,
+  decimals = 0,
+  icon: Icon,
+  hint,
+  className,
+}) {
   const isPlaceholder = value === null || value === undefined;
+  const isNumeric = typeof value === "number";
 
   return (
-    <div
+    <motion.div
+      whileHover={{ y: -2 }}
+      transition={{ duration: 0.15, ease: "easeOut" }}
       className={cn(
-        "rounded-xl border border-border bg-surface p-4",
+        "rounded-xl border border-border bg-surface p-4 transition-colors hover:border-border-strong",
         className,
       )}
     >
@@ -23,13 +36,19 @@ export default function MetricCard({ label, value, unit, icon: Icon, hint, class
             isPlaceholder ? "text-text-muted" : "text-text-primary",
           )}
         >
-          {isPlaceholder ? "—" : value}
+          {isPlaceholder ? (
+            "—"
+          ) : isNumeric ? (
+            <AnimatedNumber value={value} decimals={decimals} />
+          ) : (
+            value
+          )}
         </span>
         {!isPlaceholder && unit && (
           <span className="text-sm text-text-secondary">{unit}</span>
         )}
       </div>
       {hint && <p className="mt-1 text-xs text-text-muted">{hint}</p>}
-    </div>
+    </motion.div>
   );
 }

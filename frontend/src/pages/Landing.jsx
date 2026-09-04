@@ -1,6 +1,7 @@
 import { motion } from "framer-motion";
 import {
   ArrowRight,
+  ChevronDown,
   Gauge,
   Layers,
   MapPinned,
@@ -8,6 +9,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { Link } from "react-router-dom";
+import OrbitVisual from "../components/landing/OrbitVisual";
 import Button from "../components/ui/Button";
 import Card from "../components/ui/Card";
 
@@ -108,16 +110,21 @@ export default function Landing() {
           </motion.div>
         </div>
 
-        <motion.div
-          initial={{ opacity: 0, scale: 0.9 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 0.8, delay: 0.2 }}
-          className="pointer-events-none absolute left-1/2 top-1/2 -z-10 size-[560px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-accent/5 blur-3xl"
-          aria-hidden="true"
-        />
+        <OrbitVisual />
+
+        <motion.a
+          href="#features"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1, y: [0, 6, 0] }}
+          transition={{ opacity: { duration: 0.6, delay: 0.6 }, y: { repeat: Infinity, duration: 1.8, ease: "easeInOut" } }}
+          className="absolute bottom-6 left-1/2 flex -translate-x-1/2 items-center justify-center text-text-muted hover:text-accent"
+          aria-label="Scroll to features"
+        >
+          <ChevronDown className="size-5" aria-hidden="true" />
+        </motion.a>
       </section>
 
-      <section className="mx-auto max-w-7xl px-6 pb-24 lg:px-8">
+      <section id="features" className="mx-auto max-w-7xl px-6 pb-24 lg:px-8">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {FEATURES.map((feature, i) => (
             <motion.div
@@ -127,7 +134,7 @@ export default function Landing() {
               viewport={{ once: true, margin: "-60px" }}
               transition={{ duration: 0.4, delay: i * 0.08 }}
             >
-              <Card className="h-full">
+              <Card interactive className="h-full">
                 <div className="mb-3 flex size-10 items-center justify-center rounded-lg border border-accent/30 bg-accent-soft">
                   <feature.icon className="size-5 text-accent" aria-hidden="true" />
                 </div>
@@ -146,7 +153,16 @@ export default function Landing() {
           <h2 className="text-center font-display text-xl font-semibold text-text-primary">
             Pipeline
           </h2>
-          <div className="mt-10 grid grid-cols-2 gap-6 sm:grid-cols-4">
+          <div className="relative mt-10 grid grid-cols-2 gap-6 sm:grid-cols-4">
+            <motion.div
+              initial={{ scaleX: 0 }}
+              whileInView={{ scaleX: 1 }}
+              viewport={{ once: true, margin: "-40px" }}
+              transition={{ duration: 0.8, ease: "easeOut" }}
+              style={{ transformOrigin: "left" }}
+              className="absolute left-[12.5%] right-[12.5%] top-5 hidden h-px bg-border-strong sm:block"
+              aria-hidden="true"
+            />
             {PIPELINE_STEPS.map((step, i) => (
               <motion.div
                 key={step}
@@ -154,7 +170,7 @@ export default function Landing() {
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true, margin: "-40px" }}
                 transition={{ duration: 0.4, delay: i * 0.1 }}
-                className="flex flex-col items-center text-center"
+                className="relative z-10 flex flex-col items-center text-center"
               >
                 <div className="flex size-10 items-center justify-center rounded-full border border-accent/30 bg-accent-soft font-display text-sm font-semibold text-accent">
                   {i + 1}

@@ -1,11 +1,21 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { Image as ImageIcon, Info, MapPinned, UploadCloud } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Image as ImageIcon,
+  Info,
+  MapPinned,
+  UploadCloud,
+} from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import PageHeader from "../components/layout/PageHeader";
+import AOIMap from "../components/process/AOIMap";
+import ProcessingStages, { STAGE_LABELS } from "../components/process/ProcessingStages";
 import Button from "../components/ui/Button";
 import Card, { CardHeader } from "../components/ui/Card";
 import ImageContainer from "../components/ui/ImageContainer";
+import Modal from "../components/ui/Modal";
 import { cn } from "../lib/cn";
 
 const SOURCE_TABS = [
@@ -14,6 +24,10 @@ const SOURCE_TABS = [
 ];
 
 const SCALE_OPTIONS = [2, 4];
+const STAGE_DURATION_MS = 750;
+// The stage a "simulate failure" run stops at, purely to demonstrate the
+// error state of the processing UI — not a real failure condition.
+const MOCK_FAILURE_STAGE = 2;
 
 export default function Process() {
   const navigate = useNavigate();
@@ -22,15 +36,21 @@ export default function Process() {
   const [sourceTab, setSourceTab] = useState("upload");
   const [file, setFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
-  const [aoiSelected, setAoiSelected] = useState(false);
+  const [aoi, setAoi] = useState(null);
   const [jobName, setJobName] = useState("");
   const [scaleFactor, setScaleFactor] = useState(4);
-  const [submitting, setSubmitting] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+
+  // "form" | "processing"
+  const [view, setView] = useState("form");
+  const [stageIndex, setStageIndex] = useState(0);
+  const [status, setStatus] = useState("processing"); // "processing" | "completed" | "error"
+  const shouldFailRef = useRef(false);
 
   const canSubmit = useMemo(() => {
-    const hasSource = sourceTab === "upload" ? Boolean(file) : aoiSelected;
-    return hasSource && jobName.trim().length > 0 && !submitting;
-  }, [sourceTab, file, aoiSelected, jobName, submitting]);
+    const hasSource = sourceTab === "upload" ? Boolean(file) : Boolean(aoi);
+    return hasSource && jobName.trim().length > 0;
+  }, [sourceTab, file, aoi, jobName]);
 
   function handleFileChange(e) {
     const selected = e.target.files?.[0];
@@ -47,18 +67,119 @@ export default function Process() {
     setPreviewUrl(URL.createObjectURL(dropped));
   }
 
-  function handleSubmit() {
-    if (!canSubmit) return;
-    setSubmitting(true);
-    // MOCK/TEMPORARY — no backend yet (Phase 4). Simulate submission latency,
-    // then route to an existing mock job so the Results page can be demoed.
-    setTimeout(() => {
-      navigate("/results/job-1041");
-    }, 600);
+  function startProcessing(simulateFailure) {
+    shouldFailRef.current = simulateFailure;
+    setStageIndex(0);
+    setStatus("processing");
+    setView("processing");
   }
 
+  function handleConfirmRun() {
+    setConfirmOpen(false);
+    startProcessing(false);
+  }
+
+  function handleRetry() {
+    startProcessing(shouldFailRef.current);
+  }
+
+  // MOCK/TEMPORARY — advances through pipeline stages on a timer instead of
+  // real backend progress events. Replaced by real job-status polling in
+  // Phase 4, driven by actual inference progress from Phase 6 onward.
+  useEffect(() => {
+    if (view !== "processing" || status !== "processing") return undefined;
+
+    const timer = setTimeout(() => {
+      if (shouldFailRef.current && stageIndex === MOCK_FAILURE_STAGE) {
+        setStatus("error");
+        return;
+      }
+      if (stageIndex < STAGE_LABELS.length - 1) {
+        setStageIndex((i) => i + 1);
+      } else {
+        setStatus("completed");
+      }
+    }, STAGE_DURATION_MS);
+
+    return () => clearTimeout(timer);
+  }, [view, status, stageIndex]);
+
+  useEffect(() => {
+    if (status !== "completed") return undefined;
+    const timer = setTimeout(() => navigate("/results/job-1042"), 1000);
+    return () => clearTimeout(timer);
+  }, [status, navigate]);
+
   return (
-    <div>
+    <AnimatePresence mode="wait">
+      {view === "processing" ? (
+        <motion.div
+          key="processing"
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -8 }}
+          transition={{ duration: 0.2, ease: "easeOut" }}
+          className="mx-auto max-w-xl"
+        >
+        <PageHeader
+          title={jobName || "New Analysis"}
+          description={
+            status === "error"
+              ? "Processing failed (mock)."
+              : status === "completed"
+                ? "Processing complete — redirecting to results…"
+                : "Running the (mocked) super-resolution pipeline."
+          }
+        />
+
+        <Card>
+          <ProcessingStages stageIndex={stageIndex} status={status} />
+
+          <AnimatePresence mode="wait">
+            {status === "completed" && (
+              <motion.div
+                key="completed"
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="mt-6 flex items-center gap-2 rounded-lg border border-success/30 bg-success-soft px-4 py-3 text-sm text-success"
+              >
+                <CheckCircle2 className="size-4 shrink-0" aria-hidden="true" />
+                All stages complete.
+              </motion.div>
+            )}
+
+            {status === "error" && (
+              <motion.div
+                key="error"
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="mt-6 space-y-3"
+              >
+                <div className="flex items-center gap-2 rounded-lg border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger">
+                  <AlertTriangle className="size-4 shrink-0" aria-hidden="true" />
+                  Stage "{STAGE_LABELS[stageIndex]}" failed (mock failure for demo purposes).
+                </div>
+                <div className="flex gap-3">
+                  <Button size="sm" onClick={handleRetry}>
+                    Retry
+                  </Button>
+                  <Button size="sm" variant="secondary" onClick={() => setView("form")}>
+                    Back to Form
+                  </Button>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </Card>
+        </motion.div>
+      ) : (
+        <motion.div
+          key="form"
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -8 }}
+          transition={{ duration: 0.2, ease: "easeOut" }}
+        >
       <PageHeader
         title="New Analysis"
         description="Upload imagery or select an area of interest to begin."
@@ -150,25 +271,12 @@ export default function Process() {
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
                   transition={{ duration: 0.15 }}
-                  className="scan-grid-bg flex flex-col items-center justify-center gap-3 rounded-lg border border-border-strong bg-bg-elevated px-6 py-14 text-center"
                 >
-                  <div className="flex size-12 items-center justify-center rounded-full border border-accent/30 bg-accent-soft">
-                    <MapPinned className="size-5 text-accent" aria-hidden="true" />
-                  </div>
-                  <p className="text-sm font-medium text-text-primary">
-                    Interactive AOI map arrives in Phase 5
+                  <p className="mb-3 text-xs text-text-muted">
+                    Draw a rectangle to define your AOI. Satellite search will connect to
+                    Copernicus Data Space in Phase 5 — this map uses mock tiles/data only.
                   </p>
-                  <p className="max-w-sm text-xs text-text-muted">
-                    Satellite search &amp; AOI drawing will connect to Copernicus Data
-                    Space. For now, use the mock selection below.
-                  </p>
-                  <Button
-                    size="sm"
-                    variant={aoiSelected ? "primary" : "secondary"}
-                    onClick={() => setAoiSelected(true)}
-                  >
-                    {aoiSelected ? "Mock AOI selected" : "Select Mock AOI"}
-                  </Button>
+                  <AOIMap onAoiChange={setAoi} />
                 </motion.div>
               )}
             </AnimatePresence>
@@ -215,17 +323,59 @@ export default function Process() {
               </div>
 
               <Button
-                onClick={handleSubmit}
+                onClick={() => setConfirmOpen(true)}
                 disabled={!canSubmit}
-                loading={submitting}
                 className="mt-2 w-full"
               >
-                {submitting ? "Submitting" : "Run Analysis"}
+                Run Analysis
               </Button>
+
+              {canSubmit && (
+                <button
+                  onClick={() => startProcessing(true)}
+                  className="text-center text-xs text-text-muted underline-offset-2 hover:text-danger hover:underline"
+                >
+                  Simulate failure (demo)
+                </button>
+              )}
             </div>
           </Card>
         </div>
       </div>
-    </div>
+
+      <Modal
+        open={confirmOpen}
+        onClose={() => setConfirmOpen(false)}
+        title="Confirm analysis"
+        description="Review the details below before running the (mocked) pipeline."
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setConfirmOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleConfirmRun}>Confirm & Run</Button>
+          </>
+        }
+      >
+        <dl className="space-y-2 text-sm">
+          <div className="flex justify-between">
+            <dt className="text-text-secondary">Name</dt>
+            <dd className="text-text-primary">{jobName || "—"}</dd>
+          </div>
+          <div className="flex justify-between">
+            <dt className="text-text-secondary">Source</dt>
+            <dd className="text-text-primary">
+              {sourceTab === "upload" ? file?.name ?? "—" : "AOI rectangle"}
+            </dd>
+          </div>
+          <div className="flex justify-between">
+            <dt className="text-text-secondary">Scale factor</dt>
+            <dd className="text-text-primary">{scaleFactor}x</dd>
+          </div>
+        </dl>
+      </Modal>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 }

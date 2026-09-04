@@ -1,16 +1,27 @@
-import { Download, Gauge, Layers, Sparkles } from "lucide-react";
+import { motion } from "framer-motion";
+import { CheckCircle2, Download, Gauge, Layers, Sparkles } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import PageHeader from "../components/layout/PageHeader";
+import CompareSlider from "../components/results/CompareSlider";
 import Button from "../components/ui/Button";
 import Card, { CardHeader } from "../components/ui/Card";
 import EmptyState from "../components/ui/EmptyState";
 import ErrorState from "../components/ui/ErrorState";
-import ImageContainer from "../components/ui/ImageContainer";
 import LoadingState from "../components/ui/LoadingState";
 import MetricCard from "../components/ui/MetricCard";
 import StatusBadge from "../components/ui/StatusBadge";
 import { getMockJobById } from "../data/mockJobs";
+
+const listVariants = {
+  hidden: {},
+  visible: { transition: { staggerChildren: 0.08, delayChildren: 0.1 } },
+};
+
+const itemVariants = {
+  hidden: { opacity: 0, y: 10 },
+  visible: { opacity: 1, y: 0, transition: { duration: 0.3, ease: "easeOut" } },
+};
 
 export default function Results() {
   const { jobId } = useParams();
@@ -65,33 +76,57 @@ export default function Results() {
           onAction={() => navigate("/dashboard")}
         />
       ) : (
-        <>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <ImageContainer label="Before — Medium Resolution" aspect="aspect-video" />
-            <ImageContainer label="After — Super-Resolved (MOCK)" aspect="aspect-video" />
-          </div>
+        <motion.div variants={listVariants} initial="hidden" animate="visible">
+          <motion.div
+            variants={itemVariants}
+            className="mb-6 flex items-center gap-2 rounded-lg border border-success/30 bg-success-soft px-4 py-3 text-sm text-success"
+          >
+            <motion.span
+              initial={{ scale: 0 }}
+              animate={{ scale: 1 }}
+              transition={{ type: "spring", stiffness: 400, damping: 15, delay: 0.15 }}
+            >
+              <CheckCircle2 className="size-4 shrink-0" aria-hidden="true" />
+            </motion.span>
+            Processing complete — result ready for review.
+          </motion.div>
 
-          <div className="mt-6">
+          <motion.div variants={itemVariants}>
+            <CompareSlider />
+            <p className="mt-2 text-center text-xs text-text-muted">
+              Drag the handle to compare before and after
+            </p>
+          </motion.div>
+
+          <motion.div variants={itemVariants} className="mt-8">
             <CardHeader title="Evaluation Metrics" subtitle="Mocked values — real in Phase 7" />
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <MetricCard label="PSNR" value={job.metrics?.psnr} unit="dB" icon={Gauge} />
-              <MetricCard label="SSIM" value={job.metrics?.ssim} icon={Layers} />
-              <MetricCard label="LPIPS" value={job.metrics?.lpips} icon={Sparkles} />
+              <MetricCard
+                label="PSNR"
+                value={job.metrics?.psnr}
+                decimals={1}
+                unit="dB"
+                icon={Gauge}
+              />
+              <MetricCard label="SSIM" value={job.metrics?.ssim} decimals={3} icon={Layers} />
+              <MetricCard label="LPIPS" value={job.metrics?.lpips} decimals={3} icon={Sparkles} />
             </div>
-          </div>
+          </motion.div>
 
-          <Card className="mt-6 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
-            <div>
-              <p className="text-sm font-medium text-text-primary">Download result</p>
-              <p className="text-xs text-text-muted">
-                GeoTIFF export becomes available once the backend is connected.
-              </p>
-            </div>
-            <Button variant="secondary" icon={Download} disabled>
-              Download GeoTIFF
-            </Button>
-          </Card>
-        </>
+          <motion.div variants={itemVariants}>
+            <Card className="mt-6 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
+              <div>
+                <p className="text-sm font-medium text-text-primary">Download result</p>
+                <p className="text-xs text-text-muted">
+                  GeoTIFF export becomes available once the backend is connected.
+                </p>
+              </div>
+              <Button variant="secondary" icon={Download} disabled>
+                Download GeoTIFF
+              </Button>
+            </Card>
+          </motion.div>
+        </motion.div>
       )}
     </div>
   );

@@ -1,17 +1,30 @@
+import { motion } from "framer-motion";
+import { useMemo } from "react";
 import { cn } from "../../lib/cn";
 
-export default function Card({ as: Component = "div", className, children, ...props }) {
+export default function Card({
+  as: Component = "div",
+  interactive = false,
+  className,
+  children,
+  ...props
+}) {
+  const MotionComponent = useMemo(() => motion.create(Component), [Component]);
+
   return (
-    <Component
+    <MotionComponent
+      whileHover={interactive ? { y: -3 } : undefined}
+      whileTap={interactive ? { scale: 0.99 } : undefined}
+      transition={{ duration: 0.15, ease: "easeOut" }}
       className={cn(
         "rounded-xl border border-border bg-surface p-5",
-        "transition-colors duration-150",
+        "transition-colors duration-150 hover:border-border-strong",
         className,
       )}
       {...props}
     >
       {children}
-    </Component>
+    </MotionComponent>
   );
 }
 
