@@ -4,11 +4,13 @@ import {
   CheckCircle2,
   Image as ImageIcon,
   Info,
+  Loader2,
   MapPinned,
   UploadCloud,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import IndeterminateBar from "../components/common/IndeterminateBar";
 import PageHeader from "../components/layout/PageHeader";
 import AOIMap from "../components/process/AOIMap";
 import ProcessingStages, { STAGE_LABELS } from "../components/process/ProcessingStages";
@@ -36,6 +38,10 @@ export default function Process() {
   const [sourceTab, setSourceTab] = useState("upload");
   const [file, setFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
+  // "empty" | "uploading" | "loaded" — purely a local UI sequence; nothing
+  // is actually transmitted anywhere until Phase 4's backend integration.
+  const [uploadStage, setUploadStage] = useState("empty");
+  const [dragActive, setDragActive] = useState(false);
   const [aoi, setAoi] = useState(null);
   const [jobName, setJobName] = useState("");
   const [scaleFactor, setScaleFactor] = useState(4);
@@ -48,23 +54,40 @@ export default function Process() {
   const shouldFailRef = useRef(false);
 
   const canSubmit = useMemo(() => {
-    const hasSource = sourceTab === "upload" ? Boolean(file) : Boolean(aoi);
+    const hasSource = sourceTab === "upload" ? uploadStage === "loaded" : Boolean(aoi);
     return hasSource && jobName.trim().length > 0;
-  }, [sourceTab, file, aoi, jobName]);
+  }, [sourceTab, uploadStage, aoi, jobName]);
+
+  function ingestFile(selected) {
+    setFile(selected);
+    setUploadStage("uploading");
+    // MOCK/TEMPORARY — simulates local upload latency so the empty ->
+    // uploading -> loaded sequence is visible; no network transfer happens
+    // yet (that's Phase 4).
+    setTimeout(() => {
+      setPreviewUrl(URL.createObjectURL(selected));
+      setUploadStage("loaded");
+    }, 700);
+  }
 
   function handleFileChange(e) {
     const selected = e.target.files?.[0];
     if (!selected) return;
-    setFile(selected);
-    setPreviewUrl(URL.createObjectURL(selected));
+    ingestFile(selected);
   }
 
   function handleDrop(e) {
     e.preventDefault();
+    setDragActive(false);
     const dropped = e.dataTransfer.files?.[0];
     if (!dropped) return;
-    setFile(dropped);
-    setPreviewUrl(URL.createObjectURL(dropped));
+    ingestFile(dropped);
+  }
+
+  function resetUpload() {
+    setFile(null);
+    setPreviewUrl(null);
+    setUploadStage("empty");
   }
 
   function startProcessing(simulateFailure) {
@@ -201,14 +224,21 @@ export default function Process() {
                   key={tab.id}
                   onClick={() => setSourceTab(tab.id)}
                   className={cn(
-                    "flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                    "relative flex items-center gap-2 overflow-hidden rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
                     sourceTab === tab.id
-                      ? "bg-accent-soft text-accent"
+                      ? "text-accent"
                       : "text-text-secondary hover:text-text-primary",
                   )}
                 >
-                  <tab.icon className="size-4" aria-hidden="true" />
-                  {tab.label}
+                  {sourceTab === tab.id && (
+                    <motion.span
+                      layoutId="source-tab-indicator"
+                      transition={{ type: "spring", stiffness: 500, damping: 34 }}
+                      className="absolute inset-0 bg-accent-soft"
+                    />
+                  )}
+                  <tab.icon className="relative size-4" aria-hidden="true" />
+                  <span className="relative">{tab.label}</span>
                 </button>
               ))}
             </div>
@@ -222,40 +252,92 @@ export default function Process() {
                   exit={{ opacity: 0 }}
                   transition={{ duration: 0.15 }}
                 >
-                  {previewUrl ? (
-                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                      <ImageContainer src={previewUrl} alt="Selected upload preview" />
-                      <div className="flex flex-col justify-center gap-2">
-                        <p className="text-sm font-medium text-text-primary">{file?.name}</p>
-                        <p className="text-xs text-text-muted">
-                          {(file?.size / 1024).toFixed(0)} KB
+                  <AnimatePresence mode="wait">
+                    {uploadStage === "loaded" ? (
+                      <motion.div
+                        key="loaded"
+                        initial={{ opacity: 0, scale: 0.98 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        transition={{ duration: 0.3, ease: "easeOut" }}
+                        className="grid grid-cols-1 gap-4 sm:grid-cols-2"
+                      >
+                        <ImageContainer src={previewUrl} alt="Selected upload preview" />
+                        <div className="flex flex-col justify-center gap-2">
+                          <motion.p
+                            initial={{ opacity: 0, y: 6 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: 0.1 }}
+                            className="flex items-center gap-1.5 text-xs font-medium text-success"
+                          >
+                            <CheckCircle2 className="size-3.5" aria-hidden="true" />
+                            Ready for analysis
+                          </motion.p>
+                          <p className="text-sm font-medium text-text-primary">{file?.name}</p>
+                          <p className="text-xs text-text-muted">
+                            {(file?.size / 1024).toFixed(0)} KB
+                          </p>
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            className="mt-2 w-fit"
+                            onClick={resetUpload}
+                          >
+                            Replace image
+                          </Button>
+                        </div>
+                      </motion.div>
+                    ) : uploadStage === "uploading" ? (
+                      <motion.div
+                        key="uploading"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="flex flex-col items-center justify-center gap-3 rounded-lg border border-accent/40 bg-bg-elevated px-6 py-14 text-center"
+                      >
+                        <Loader2 className="size-6 animate-spin text-accent" aria-hidden="true" />
+                        <p className="text-sm font-medium text-text-primary">
+                          Reading {file?.name}&hellip;
                         </p>
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          className="mt-2 w-fit"
-                          onClick={() => fileInputRef.current?.click()}
+                        <IndeterminateBar className="w-40" />
+                      </motion.div>
+                    ) : (
+                      <motion.div
+                        key="empty"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        onDragOver={(e) => {
+                          e.preventDefault();
+                          setDragActive(true);
+                        }}
+                        onDragLeave={() => setDragActive(false)}
+                        onDrop={handleDrop}
+                        onClick={() => fileInputRef.current?.click()}
+                        className={cn(
+                          "flex cursor-pointer flex-col items-center justify-center gap-3 rounded-lg border border-dashed px-6 py-14 text-center transition-colors",
+                          dragActive
+                            ? "border-accent bg-accent-soft/40 scale-[1.01]"
+                            : "border-border-strong bg-bg-elevated hover:border-accent/50",
+                        )}
+                      >
+                        <motion.div
+                          animate={
+                            dragActive
+                              ? { y: [-2, 2, -2] }
+                              : { y: 0 }
+                          }
+                          transition={{ repeat: dragActive ? Infinity : 0, duration: 1.1, ease: "easeInOut" }}
+                          className="flex size-12 items-center justify-center rounded-full border border-accent/30 bg-accent-soft"
                         >
-                          Replace image
-                        </Button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div
-                      onDragOver={(e) => e.preventDefault()}
-                      onDrop={handleDrop}
-                      onClick={() => fileInputRef.current?.click()}
-                      className="flex cursor-pointer flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-border-strong bg-bg-elevated px-6 py-14 text-center transition-colors hover:border-accent/50"
-                    >
-                      <div className="flex size-12 items-center justify-center rounded-full border border-accent/30 bg-accent-soft">
-                        <UploadCloud className="size-5 text-accent" aria-hidden="true" />
-                      </div>
-                      <p className="text-sm font-medium text-text-primary">
-                        Drag & drop imagery, or click to browse
-                      </p>
-                      <p className="text-xs text-text-muted">GeoTIFF, JPEG, PNG supported</p>
-                    </div>
-                  )}
+                          <UploadCloud className="size-5 text-accent" aria-hidden="true" />
+                        </motion.div>
+                        <p className="text-sm font-medium text-text-primary">
+                          {dragActive ? "Drop to upload" : "Drag & drop imagery, or click to browse"}
+                        </p>
+                        <p className="text-xs text-text-muted">GeoTIFF, JPEG, PNG supported</p>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
                   <input
                     ref={fileInputRef}
                     type="file"
@@ -310,13 +392,20 @@ export default function Process() {
                       key={factor}
                       onClick={() => setScaleFactor(factor)}
                       className={cn(
-                        "flex-1 rounded-lg border px-3 py-2 text-sm font-medium transition-colors",
+                        "relative flex-1 overflow-hidden rounded-lg border px-3 py-2 text-sm font-medium transition-colors",
                         scaleFactor === factor
-                          ? "border-accent/50 bg-accent-soft text-accent"
+                          ? "border-accent/50 text-accent"
                           : "border-border-strong text-text-secondary hover:text-text-primary",
                       )}
                     >
-                      {factor}x
+                      {scaleFactor === factor && (
+                        <motion.span
+                          layoutId="scale-factor-indicator"
+                          transition={{ type: "spring", stiffness: 500, damping: 34 }}
+                          className="absolute inset-0 bg-accent-soft"
+                        />
+                      )}
+                      <span className="relative">{factor}x</span>
                     </button>
                   ))}
                 </div>

@@ -1,13 +1,14 @@
 import { AnimatePresence, motion } from "framer-motion";
 import L from "leaflet";
 import { Crosshair, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
-import { MapContainer, Rectangle, TileLayer, useMap, useMapEvents } from "react-leaflet";
+import { useEffect, useRef, useState } from "react";
+import { CircleMarker, MapContainer, Rectangle, TileLayer, useMap, useMapEvents } from "react-leaflet";
 import { cn } from "../../lib/cn";
 import Button from "../ui/Button";
 
 const DEFAULT_CENTER = [22.35, 78.6];
 const DEFAULT_ZOOM = 5;
+const AOI_STEPS = ["AOI selected", "Calculating area…", "Ready for analysis"];
 
 function CursorController({ active }) {
   const map = useMap();
@@ -46,14 +47,46 @@ function DrawHandler({ active, onChange, onComplete }) {
   return null;
 }
 
+function computeAreaKm2(bounds) {
+  const sw = bounds.getSouthWest();
+  const widthM = sw.distanceTo(bounds.getSouthEast());
+  const heightM = sw.distanceTo(bounds.getNorthWest());
+  return (widthM * heightM) / 1e6;
+}
+
+/** Steps through "AOI selected" -> "Calculating area…" -> "Ready" once per new AOI. */
+function useAoiStatusSequence(boundsKey) {
+  const [step, setStep] = useState(0);
+
+  useEffect(() => {
+    if (boundsKey === 0) return undefined;
+    setStep(0);
+    const t1 = setTimeout(() => setStep(1), 450);
+    const t2 = setTimeout(() => setStep(2), 950);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
+  }, [boundsKey]);
+
+  return step;
+}
+
 export default function AOIMap({ onAoiChange, className }) {
   const [mapReady, setMapReady] = useState(false);
   const [drawing, setDrawing] = useState(false);
   const [bounds, setBounds] = useState(null);
+  const boundsKeyRef = useRef(0);
+  const [boundsKey, setBoundsKey] = useState(0);
+  const statusStep = useAoiStatusSequence(boundsKey);
 
   function handleComplete(finalBounds) {
     setBounds(finalBounds);
     setDrawing(false);
+    if (finalBounds) {
+      boundsKeyRef.current += 1;
+      setBoundsKey(boundsKeyRef.current);
+    }
     onAoiChange?.(finalBounds ? boundsToAoi(finalBounds) : null);
   }
 
@@ -61,6 +94,10 @@ export default function AOIMap({ onAoiChange, className }) {
     setBounds(null);
     onAoiChange?.(null);
   }
+
+  const corners = bounds
+    ? [bounds.getNorthWest(), bounds.getNorthEast(), bounds.getSouthEast(), bounds.getSouthWest()]
+    : [];
 
   return (
     <div
@@ -82,6 +119,16 @@ export default function AOIMap({ onAoiChange, className }) {
         )}
       </AnimatePresence>
 
+      {/* subtle radar sweep across the map while actively drawing */}
+      {drawing && (
+        <motion.div
+          className="pointer-events-none absolute inset-x-0 z-[900] h-px bg-gradient-to-r from-transparent via-accent/60 to-transparent"
+          initial={{ top: "0%", opacity: 0 }}
+          animate={{ top: ["0%", "100%"], opacity: [0, 1, 0] }}
+          transition={{ repeat: Infinity, duration: 1.8, ease: "easeInOut" }}
+        />
+      )}
+
       <MapContainer
         center={DEFAULT_CENTER}
         zoom={DEFAULT_ZOOM}
@@ -97,10 +144,30 @@ export default function AOIMap({ onAoiChange, className }) {
         <DrawHandler active={drawing} onChange={setBounds} onComplete={handleComplete} />
         {bounds && (
           <Rectangle
+            key={boundsKey}
             bounds={bounds}
-            pathOptions={{ color: "#22d3ee", weight: 2, fillOpacity: 0.12 }}
+            pathOptions={{
+              color: "#22d3ee",
+              weight: 2,
+              fillOpacity: 0.12,
+              className: "aoi-rectangle-active",
+            }}
           />
         )}
+        {bounds &&
+          corners.map((corner, i) => (
+            <CircleMarker
+              key={`${boundsKey}-${i}`}
+              center={corner}
+              radius={4}
+              pathOptions={{
+                color: "#22d3ee",
+                fillColor: "#22d3ee",
+                fillOpacity: 1,
+                weight: 1.5,
+              }}
+            />
+          ))}
       </MapContainer>
 
       <div className="absolute left-3 top-3 z-[1000] flex gap-2">
@@ -129,6 +196,26 @@ export default function AOIMap({ onAoiChange, className }) {
             transition={{ duration: 0.2 }}
             className="absolute bottom-3 left-3 right-3 z-[1000] rounded-lg border border-border-strong bg-bg/90 p-3 backdrop-blur"
           >
+            <div className="mb-2 flex items-center justify-between">
+              <AnimatePresence mode="wait">
+                <motion.span
+                  key={statusStep}
+                  initial={{ opacity: 0, y: -4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 4 }}
+                  transition={{ duration: 0.15 }}
+                  className={cn(
+                    "text-xs font-medium",
+                    statusStep === 2 ? "text-success" : "text-accent",
+                  )}
+                >
+                  {AOI_STEPS[statusStep]}
+                </motion.span>
+              </AnimatePresence>
+              <span className="text-xs text-text-secondary">
+                &asymp; {computeAreaKm2(bounds).toLocaleString(undefined, { maximumFractionDigits: 0 })} km&sup2;
+              </span>
+            </div>
             <div className="grid grid-cols-2 gap-x-4 gap-y-1 font-mono text-xs text-text-secondary sm:grid-cols-4">
               <span>N {bounds.getNorth().toFixed(4)}</span>
               <span>S {bounds.getSouth().toFixed(4)}</span>

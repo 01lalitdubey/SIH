@@ -121,6 +121,50 @@
   }
 }
 
+@keyframes twinkle {
+  0%,
+  100% {
+    opacity: 0.15;
+  }
+  50% {
+    opacity: 0.9;
+  }
+}
+
+.animate-twinkle {
+  animation-name: twinkle;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-twinkle {
+    animation: none;
+    opacity: 0.3;
+  }
+}
+
+@keyframes aoi-boundary-pulse {
+  0% {
+    stroke-opacity: 1;
+    stroke-width: 4;
+  }
+  100% {
+    stroke-opacity: 0.6;
+    stroke-width: 2;
+  }
+}
+
+.aoi-rectangle-active path {
+  animation: aoi-boundary-pulse 0.6s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aoi-rectangle-active path {
+    animation: none;
+  }
+}
+
 /* ---------------------------------------------------------------------- */
 /* Leaflet dark-theme integration                                         */
 /* ---------------------------------------------------------------------- */

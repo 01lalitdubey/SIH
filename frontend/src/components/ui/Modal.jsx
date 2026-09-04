@@ -2,6 +2,9 @@ import { AnimatePresence, motion } from "framer-motion";
 import { X } from "lucide-react";
 import { useEffect } from "react";
 import { createPortal } from "react-dom";
+import { staggerContainer, slideUp } from "../../lib/motion";
+
+const contentStagger = staggerContainer(0.06, 0.08);
 
 export default function Modal({ open, onClose, title, description, children, footer }) {
   useEffect(() => {
@@ -45,16 +48,32 @@ export default function Modal({ open, onClose, title, description, children, foo
               <X className="size-4" aria-hidden="true" />
             </button>
 
-            {title && (
-              <h2 id="modal-title" className="font-display text-lg font-semibold text-text-primary">
-                {title}
-              </h2>
-            )}
-            {description && <p className="mt-1.5 text-sm text-text-secondary">{description}</p>}
+            <motion.div variants={contentStagger} initial="hidden" animate="visible">
+              {title && (
+                <motion.h2
+                  variants={slideUp}
+                  id="modal-title"
+                  className="font-display text-lg font-semibold text-text-primary"
+                >
+                  {title}
+                </motion.h2>
+              )}
+              {description && (
+                <motion.p variants={slideUp} className="mt-1.5 text-sm text-text-secondary">
+                  {description}
+                </motion.p>
+              )}
 
-            <div className="mt-4">{children}</div>
+              <motion.div variants={slideUp} className="mt-4">
+                {children}
+              </motion.div>
 
-            {footer && <div className="mt-6 flex justify-end gap-3">{footer}</div>}
+              {footer && (
+                <motion.div variants={slideUp} className="mt-6 flex justify-end gap-3">
+                  {footer}
+                </motion.div>
+              )}
+            </motion.div>
           </motion.div>
         </div>
       )}

@@ -1,3 +1,4 @@
+import { motion } from "framer-motion";
 import { MoveHorizontal, Satellite, Sparkles } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 import { cn } from "../../lib/cn";
@@ -12,7 +13,13 @@ function Placeholder({ variant, label }) {
       )}
     >
       {isAfter ? (
-        <Sparkles className="size-8 text-accent/70" aria-hidden="true" />
+        <motion.div
+          initial={{ filter: "blur(6px)" }}
+          animate={{ filter: "blur(0px)" }}
+          transition={{ duration: 1.1, delay: 0.3, ease: "easeOut" }}
+        >
+          <Sparkles className="size-8 text-accent/70" aria-hidden="true" />
+        </motion.div>
       ) : (
         <Satellite className="size-8 blur-[0.5px]" aria-hidden="true" />
       )}
@@ -20,7 +27,7 @@ function Placeholder({ variant, label }) {
           where the comparison handle clips this layer. */}
       <span
         className={cn(
-          "absolute top-2 rounded-md border border-border-strong bg-bg/80 px-2 py-1 text-xs font-medium backdrop-blur",
+          "absolute top-2 max-w-[46%] truncate rounded-md border border-border-strong bg-bg/80 px-2 py-1 text-[11px] font-medium backdrop-blur sm:max-w-none sm:text-xs",
           isAfter ? "right-2" : "left-2",
         )}
       >
@@ -93,7 +100,7 @@ export default function CompareSlider({
         style={{ left: `${position}%` }}
       />
 
-      <div
+      <motion.div
         role="slider"
         tabIndex={0}
         aria-label="Before/after comparison position"
@@ -102,11 +109,14 @@ export default function CompareSlider({
         aria-valuemax={100}
         onKeyDown={handleKeyDown}
         onPointerDown={handlePointerDown}
-        className="absolute top-1/2 flex size-9 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize items-center justify-center rounded-full border border-accent/60 bg-bg shadow-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+        whileHover={{ scale: 1.08 }}
+        whileTap={{ scale: 0.96 }}
+        transition={{ duration: 0.15 }}
+        className="absolute top-1/2 flex size-9 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize items-center justify-center rounded-full border border-accent/60 bg-bg shadow-[0_0_16px_rgba(34,211,238,0.4)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
         style={{ left: `${position}%` }}
       >
         <MoveHorizontal className="size-4 text-accent" aria-hidden="true" />
-      </div>
+      </motion.div>
     </div>
   );
 }

@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import OrbitVisual from "../components/landing/OrbitVisual";
+import StarField from "../components/common/StarField";
 import Button from "../components/ui/Button";
 import Card from "../components/ui/Card";
 
@@ -63,12 +64,21 @@ export default function Landing() {
         </Button>
       </header>
 
-      <section className="scan-grid-bg relative overflow-hidden px-6 pb-24 pt-16 lg:px-8 lg:pt-24">
+      <section className="relative isolate overflow-hidden px-6 pb-24 pt-16 lg:px-8 lg:pt-24">
+        <StarField count={50} className="-z-20" />
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.9, ease: "easeOut" }}
+          className="scan-grid-bg absolute inset-0 -z-10"
+          aria-hidden="true"
+        />
+
         <div className="mx-auto max-w-4xl text-center">
           <motion.div
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5 }}
+            transition={{ duration: 0.5, delay: 0.25 }}
             className="mb-6 inline-flex items-center gap-2 rounded-full border border-border-strong bg-surface px-3 py-1 text-xs font-medium text-text-secondary"
           >
             <span className="size-1.5 rounded-full bg-accent" />
@@ -78,7 +88,7 @@ export default function Landing() {
           <motion.h1
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, delay: 0.05 }}
+            transition={{ duration: 0.6, delay: 0.32 }}
             className="font-display text-4xl font-semibold tracking-tight text-text-primary sm:text-5xl lg:text-6xl"
           >
             Deep Learning Based{" "}
@@ -88,7 +98,7 @@ export default function Landing() {
           <motion.p
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, delay: 0.1 }}
+            transition={{ duration: 0.6, delay: 0.4 }}
             className="mx-auto mt-5 max-w-2xl text-base text-text-secondary sm:text-lg"
           >
             Turn medium-resolution satellite imagery into higher-resolution,
@@ -98,7 +108,7 @@ export default function Landing() {
           <motion.div
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, delay: 0.15 }}
+            transition={{ duration: 0.6, delay: 0.48 }}
             className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row"
           >
             <Button as={Link} to="/process" size="lg" icon={ScanLine}>

@@ -1,3 +1,4 @@
+import { motion, useReducedMotion } from "framer-motion";
 import { CheckCircle2, CircleDashed, Loader2, XCircle } from "lucide-react";
 import { cn } from "../../lib/cn";
 
@@ -12,6 +13,7 @@ const STATUS_CONFIG = {
     icon: Loader2,
     className: "text-accent bg-info-soft border-accent/30",
     spin: true,
+    live: true,
   },
   completed: {
     label: "Completed",
@@ -26,6 +28,7 @@ const STATUS_CONFIG = {
 };
 
 export default function StatusBadge({ status, className }) {
+  const prefersReducedMotion = useReducedMotion();
   const config = STATUS_CONFIG[status] ?? STATUS_CONFIG.pending;
   const Icon = config.icon;
 
@@ -37,6 +40,18 @@ export default function StatusBadge({ status, className }) {
         className,
       )}
     >
+      {config.live && (
+        <span className="relative flex size-1.5">
+          {!prefersReducedMotion && (
+            <motion.span
+              className="absolute inline-flex size-full rounded-full bg-accent"
+              animate={{ scale: [1, 2.2], opacity: [0.6, 0] }}
+              transition={{ repeat: Infinity, duration: 1.6, ease: "easeOut" }}
+            />
+          )}
+          <span className="relative inline-flex size-1.5 rounded-full bg-accent" />
+        </span>
+      )}
       <Icon className={cn("size-3.5", config.spin && "animate-spin")} aria-hidden="true" />
       {config.label}
     </span>

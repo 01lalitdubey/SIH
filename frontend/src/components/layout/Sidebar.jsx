@@ -8,27 +8,43 @@ const NAV_ITEMS = [
   { to: "/process", label: "New Analysis", icon: ScanLine },
 ];
 
-function NavItem({ to, label, icon: Icon, onNavigate }) {
+function NavItem({ to, label, icon: Icon, onNavigate, scope }) {
   return (
     <NavLink
       to={to}
       onClick={onNavigate}
       className={({ isActive }) =>
         cn(
-          "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
+          "relative flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
           isActive
-            ? "bg-accent-soft text-accent border border-accent/30"
-            : "text-text-secondary border border-transparent hover:bg-surface-hover hover:text-text-primary",
+            ? "text-accent"
+            : "text-text-secondary hover:bg-surface-hover hover:text-text-primary",
         )
       }
     >
-      <Icon className="size-4" aria-hidden="true" />
-      {label}
+      {({ isActive }) =>
+        isActive ? (
+          <>
+            <motion.span
+              layoutId={`sidebar-active-nav-${scope}`}
+              transition={{ type: "spring", stiffness: 420, damping: 34 }}
+              className="absolute inset-0 rounded-lg border border-accent/30 bg-accent-soft"
+            />
+            <Icon className="relative size-4" aria-hidden="true" />
+            <span className="relative">{label}</span>
+          </>
+        ) : (
+          <>
+            <Icon className="size-4" aria-hidden="true" />
+            {label}
+          </>
+        )
+      }
     </NavLink>
   );
 }
 
-function SidebarContent({ onNavigate }) {
+function SidebarContent({ onNavigate, scope }) {
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-2 px-4 py-5">
@@ -43,7 +59,7 @@ function SidebarContent({ onNavigate }) {
 
       <nav className="flex flex-1 flex-col gap-1 px-3 py-2">
         {NAV_ITEMS.map((item) => (
-          <NavItem key={item.to} {...item} onNavigate={onNavigate} />
+          <NavItem key={item.to} {...item} onNavigate={onNavigate} scope={scope} />
         ))}
       </nav>
 
@@ -62,7 +78,7 @@ export default function Sidebar({ mobileOpen, onClose }) {
     <>
       {/* Desktop sidebar */}
       <aside className="hidden w-64 shrink-0 border-r border-border bg-bg-elevated lg:block">
-        <SidebarContent />
+        <SidebarContent scope="desktop" />
       </aside>
 
       {/* Mobile drawer */}
@@ -87,7 +103,7 @@ export default function Sidebar({ mobileOpen, onClose }) {
             >
               <X className="size-4" aria-hidden="true" />
             </button>
-            <SidebarContent onNavigate={onClose} />
+            <SidebarContent onNavigate={onClose} scope="mobile" />
           </motion.div>
         </div>
       )}

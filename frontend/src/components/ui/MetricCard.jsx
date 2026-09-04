@@ -1,6 +1,35 @@
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import { cn } from "../../lib/cn";
 import AnimatedNumber from "./AnimatedNumber";
+
+const RING_RADIUS = 15;
+const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
+
+function MetricRing({ percent }) {
+  const prefersReducedMotion = useReducedMotion();
+  const clamped = Math.max(0, Math.min(100, percent));
+  const offset = RING_CIRCUMFERENCE * (1 - clamped / 100);
+
+  return (
+    <svg viewBox="0 0 36 36" className="size-9 -rotate-90">
+      <circle cx="18" cy="18" r={RING_RADIUS} className="fill-none stroke-border" strokeWidth="3" />
+      <motion.circle
+        cx="18"
+        cy="18"
+        r={RING_RADIUS}
+        className="fill-none stroke-accent"
+        strokeWidth="3"
+        strokeLinecap="round"
+        strokeDasharray={RING_CIRCUMFERENCE}
+        initial={{ strokeDashoffset: RING_CIRCUMFERENCE }}
+        animate={{ strokeDashoffset: offset }}
+        transition={
+          prefersReducedMotion ? { duration: 0 } : { duration: 0.9, ease: "easeOut" }
+        }
+      />
+    </svg>
+  );
+}
 
 export default function MetricCard({
   label,
@@ -9,6 +38,7 @@ export default function MetricCard({
   decimals = 0,
   icon: Icon,
   hint,
+  ringPercent,
   className,
 }) {
   const isPlaceholder = value === null || value === undefined;
@@ -27,7 +57,11 @@ export default function MetricCard({
         <span className="text-xs font-medium uppercase tracking-wide text-text-muted">
           {label}
         </span>
-        {Icon && <Icon className="size-4 text-accent" aria-hidden="true" />}
+        {ringPercent !== undefined && !isPlaceholder ? (
+          <MetricRing percent={ringPercent} />
+        ) : (
+          Icon && <Icon className="size-4 text-accent" aria-hidden="true" />
+        )}
       </div>
       <div className="mt-2 flex items-baseline gap-1">
         <span

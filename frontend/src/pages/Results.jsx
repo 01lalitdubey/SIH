@@ -107,9 +107,22 @@ export default function Results() {
                 decimals={1}
                 unit="dB"
                 icon={Gauge}
+                ringPercent={job.metrics ? Math.min(100, (job.metrics.psnr / 50) * 100) : undefined}
               />
-              <MetricCard label="SSIM" value={job.metrics?.ssim} decimals={3} icon={Layers} />
-              <MetricCard label="LPIPS" value={job.metrics?.lpips} decimals={3} icon={Sparkles} />
+              <MetricCard
+                label="SSIM"
+                value={job.metrics?.ssim}
+                decimals={3}
+                icon={Layers}
+                ringPercent={job.metrics ? job.metrics.ssim * 100 : undefined}
+              />
+              <MetricCard
+                label="LPIPS"
+                value={job.metrics?.lpips}
+                decimals={3}
+                icon={Sparkles}
+                ringPercent={job.metrics ? (1 - job.metrics.lpips) * 100 : undefined}
+              />
             </div>
           </motion.div>
 
