@@ -1,0 +1,21 @@
+# Local development Postgres for the SRM backend.
+# This is intentionally separate from any system-wide PostgreSQL install so
+# it never touches unrelated databases/credentials on the host machine.
+#
+# Usage: docker compose up -d
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: srm-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: srm
+      POSTGRES_PASSWORD: srm_dev_password
+      POSTGRES_DB: srm_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - srm_pgdata:/var/lib/postgresql/data
+
+volumes:
+  srm_pgdata:
