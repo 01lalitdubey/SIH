@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import health, images, processing, results
+from app.api import health, images, processing, results, satellite
 from app.core.config import get_settings
 from app.core.database import Base, engine
 
@@ -44,6 +44,7 @@ app.include_router(health.router, prefix=API_PREFIX)
 app.include_router(images.router, prefix=API_PREFIX)
 app.include_router(processing.router, prefix=API_PREFIX)
 app.include_router(results.router, prefix=API_PREFIX)
+app.include_router(satellite.router, prefix=API_PREFIX)
 
 
 @app.get("/")

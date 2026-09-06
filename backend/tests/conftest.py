@@ -10,6 +10,8 @@ from sqlalchemy.pool import StaticPool
 from app.core import database as db_module
 from app.core.database import Base, get_db
 from app.main import app
+from app.services.satellite import service as satellite_service
+from app.services.satellite.fake import FakeSatelliteProvider
 
 # In-memory SQLite for the test suite — no Postgres/Docker required. The
 # GUID column type (app/core/types.py) is what makes the same models work
@@ -46,6 +48,18 @@ def _create_schema():
     Base.metadata.create_all(bind=engine)
     yield
     Base.metadata.drop_all(bind=engine)
+
+
+@pytest.fixture(autouse=True)
+def _fake_satellite_provider(monkeypatch):
+    """Every test gets a fresh, network-free FakeSatelliteProvider so the
+    Phase 3/4 suite (which creates plenty of AOI-only jobs) never makes a
+    real Copernicus call. Tests that want a specific failure mode build
+    their own FakeSatelliteProvider(...) and pass it to this fixture's
+    module attribute directly — see test_satellite.py."""
+    fake = FakeSatelliteProvider()
+    monkeypatch.setattr(satellite_service, "_provider", fake)
+    return fake
 
 
 @pytest.fixture

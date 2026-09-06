@@ -35,7 +35,10 @@ class MockProcessor(BaseProcessor):
                 return
 
             job.status = JobStatus.PROCESSING
-            job.started_at = datetime.now(timezone.utc)
+            # AOI-driven jobs may already have gone through satellite
+            # acquisition (services/satellite/service.py) before this
+            # processor ever runs — don't clobber that earlier start time.
+            job.started_at = job.started_at or datetime.now(timezone.utc)
             session.commit()
 
             start_time = time.monotonic()

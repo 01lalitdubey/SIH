@@ -17,6 +17,25 @@ class Settings(BaseSettings):
 
     max_upload_size_mb: int = 25
 
+    # --- Phase 5: Copernicus Data Space Ecosystem (Sentinel-2) -------------
+    # Left blank by default. When unset, satellite search endpoints return a
+    # clear 503 (MissingCredentialsError) instead of silently mocking data.
+    copernicus_client_id: str | None = None
+    copernicus_client_secret: str | None = None
+    copernicus_token_url: str = (
+        "https://identity.dataspace.copernicus.eu/auth/realms/CDSE/protocol/openid-connect/token"
+    )
+    copernicus_catalog_url: str = "https://catalogue.dataspace.copernicus.eu/odata/v1"
+    copernicus_download_url: str = "https://zipper.dataspace.copernicus.eu/odata/v1"
+
+    satellite_dir: str = "satellite"
+    # Full Sentinel-2 SAFE products are commonly 700MB-1GB (confirmed against
+    # the live catalog during Phase 5 development). This is a deliberate
+    # safety cap, not a bug — see docs/ARCHITECTURE.md Phase 5 section.
+    satellite_max_download_mb: int = 200
+    satellite_http_timeout_seconds: float = 30.0
+    satellite_max_scenes_considered: int = 20
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
@@ -30,6 +49,12 @@ class Settings(BaseSettings):
     @property
     def output_path(self) -> Path:
         path = BACKEND_ROOT / self.output_dir
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    @property
+    def satellite_path(self) -> Path:
+        path = BACKEND_ROOT / self.satellite_dir
         path.mkdir(parents=True, exist_ok=True)
         return path
 

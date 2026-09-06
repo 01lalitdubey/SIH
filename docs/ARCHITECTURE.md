@@ -144,12 +144,13 @@ results
 
 ## 7. Satellite-Data Pipeline
 
-- **[MOCK now]**: `POST /api/v1/aoi/search` returns a small hardcoded/fake list of
-  "available scenes" for a submitted AOI (id, date, cloud cover %, thumbnail placeholder),
-  so the AOI-selection UI can be fully built and tested.
-- **[FUTURE, Phase 5]**: replace with real Copernicus Data Space Ecosystem
-  integration — OAuth2 client credentials, product search by AOI/date/cloud-cover,
-  async download of Sentinel-2 bands into storage.
+- **[REAL, Phase 5]**: AOI-driven jobs run a real Copernicus Data Space Ecosystem (CDSE)
+  search before the mock processor ever runs — no hardcoded scene list. See
+  **§17 Phase 5 — Satellite Data Integration** below for the full design; this
+  section is kept for historical continuity with Phases 0-4.
+- Superseded: there never was an `/api/v1/aoi/search` endpoint — Phase 5 wires
+  satellite acquisition directly into `POST /api/v1/process` instead (an AOI-driven
+  job *is* the search), which needed no new upload-style endpoint.
 
 ## 8. AI Pipeline
 
@@ -330,7 +331,7 @@ CI/CD via GitHub Actions (lint/test on PR); not set up until Phase 10.
 | Area | MVP (build now) | Future (later phase) |
 |---|---|---|
 | Processing | Mock transform, instant/fast | Real PyTorch SR (Phase 6) |
-| Satellite data | Mock AOI search results | Real Copernicus/Sentinel-2 (Phase 5) |
+| Satellite data | **Real** Copernicus/Sentinel-2 search + selection (Phase 5, done) | Full-scene/band download (currently size-capped — see §17) |
 | Geospatial fidelity | Not preserved (plain image ops) | Rasterio/GDAL, GeoTIFF, CRS-preserving (Phase 7) |
 | Storage | Local disk | S3/MinIO object storage |
 | Auth | None (single demo user) | JWT-based, if required |
@@ -339,4 +340,200 @@ CI/CD via GitHub Actions (lint/test on PR); not set up until Phase 10.
 
 ---
 
-Awaiting approval before Phase 1 (Frontend Foundation) begins.
+## 17. Phase 5 — Satellite Data Integration (done)
+
+Status: **implemented and tested**. Replaces the never-built AOI-search stub described
+in §7/§10 of this document's original (Phase 0) proposal with a real Copernicus Data
+Space Ecosystem (CDSE) integration for Sentinel-2.
+
+### 17.1 Where it sits in the pipeline
+
+```
+AOI (frontend, unchanged)
+   |
+   v
+POST /api/v1/process  { aoi, [start_date, end_date, max_cloud_cover] }
+   |
+   v
+processing_service._run_job_pipeline (background task)
+   |
+   +-- job.aoi_geometry is not null? -----------------------------+
+   |                                                                |
+   |  NO (image_id job)                                    YES (AOI job)
+   |  |                                                             |
+   |  v                                                             v
+   |  MockProcessor.run()                          job.current_stage = "satellite_acquisition"
+   |  (unchanged, Phase 3/4)                                        |
+   |                                                                 v
+   |                                                  SatelliteService.acquire_scene_for_job
+   |                                                        |
+   |                                              validate AOI / dates / cloud cover
+   |                                                        |
+   |                                              CopernicusSatelliteProvider.authenticate()
+   |                                                        |
+   |                                              CopernicusSatelliteProvider.search_scenes()
+   |                                                        |
+   |                                              BaseSatelliteProvider.select_best_scene()
+   |                                                        |
+   |                                              CopernicusSatelliteProvider.download_scene()
+   |                                                        |
+   |                                              persist SatelliteScene row, link to job
+   |                                                        |
+   |                                              failure at any step -> job.status = failed, STOP
+   |                                                        |
+   |                                              success -----+
+   |                                                            |
+   +------------------------------------------------------------+
+                              |
+                              v
+                     MockProcessor.run()  (Phase 3/4, unchanged)
+```
+
+An image-driven job never enters the satellite branch at all — zero behavior change
+for Phase 4's existing flow. An AOI-driven job's real scene search happens strictly
+*before* the mock pipeline; if it fails, the job fails immediately and never reaches
+(or fakes) the mock stages, so a failed satellite acquisition can never look like a
+successful analysis.
+
+### 17.2 Satellite service architecture
+
+```
+backend/app/services/satellite/
+  base.py        BaseSatelliteProvider (ABC) + AOIPolygon/SearchParams/SceneCandidate/
+                  DownloadResult dataclasses + the shared select_best_scene() ranking
+  copernicus.py   CopernicusSatelliteProvider — the real implementation
+  fake.py         FakeSatelliteProvider — deterministic, network-free, test-only
+  storage.py      BaseSatelliteStorage (ABC) + LocalSatelliteStorage
+  service.py      SatelliteService-equivalent module: validation + orchestration +
+                  DB persistence; the only thing processing_service.py calls
+  exceptions.py   SatelliteError and its subclasses (one per failure mode)
+```
+
+`processing_service.py` and every test depend only on `base.BaseSatelliteProvider` —
+never on `copernicus.py` directly — so `fake.py` is a drop-in for tests, and a second
+real provider would be a drop-in for production, with no change to `service.py`'s
+orchestration logic.
+
+### 17.3 Copernicus API integration (verified against the live API)
+
+| Call | Endpoint | Verified how |
+|---|---|---|
+| Token (OAuth2 client-credentials) | `POST {COPERNICUS_TOKEN_URL}` | Endpoint reachability confirmed live (correctly rejects GET with 405); the authenticated exchange itself is untested — no real client credentials exist in this environment. |
+| Catalog search | `GET {COPERNICUS_CATALOG_URL}/Products?$filter=...&$expand=Attributes` | **Executed live**, unauthenticated, during development: real Sentinel-2 products returned for a real AOI polygon + date range, with server-side cloud-cover and processing-level (`S2MSI2A`) filtering confirmed correct. |
+| Download | `GET {COPERNICUS_DOWNLOAD_URL}/Products({id})/$value` (Bearer token) | Endpoint pattern per CDSE's documented OData download convention; code path is real (streamed, size-capped) but unauthenticated download was not attempted (would require real credentials and, per below, would mostly hit the size cap anyway). |
+
+The catalog search being publicly queryable was a genuine discovery made while building this — it let real search/ranking logic be validated against live data even with zero credentials configured, which is why those parts of this phase carry higher confidence than the authenticated paths.
+
+**The $filter clause actually sent** (AOI polygon intersection, a date window, and two
+server-side attribute filters — cloud cover and processing level — all in one query):
+
+```
+Collection/Name eq 'SENTINEL-2' and
+OData.CSC.Intersects(area=geography'SRID=4326;POLYGON((west south, west north, east north, east south, west south))') and
+ContentDate/Start gt {start}T00:00:00.000Z and
+ContentDate/Start lt {end}T00:00:00.000Z and
+Attributes/OData.CSC.DoubleAttribute/any(att:att/Name eq 'cloudCover' and att/OData.CSC.DoubleAttribute/Value le {max_cloud_cover}) and
+Attributes/OData.CSC.StringAttribute/any(att:att/Name eq 'processingLevel' and att/OData.CSC.StringAttribute/Value eq 'S2MSI2A')
+```
+
+L2A (surface reflectance, atmospherically corrected) is preferred over raw L1C —
+the standard analysis-ready Sentinel-2 product for this kind of platform.
+
+### 17.4 Why download is size-capped, not "not implemented"
+
+A live query during development returned a real Sentinel-2 L1C product with
+`ContentLength: 791572987` — **~792MB for one tile**. `SATELLITE_MAX_DOWNLOAD_MB`
+(default 200MB) is a deliberate safety gate: `CopernicusSatelliteProvider.download_scene`
+checks the real `ContentLength` from search results before ever opening a connection,
+and refuses (`SceneDownloadError`, job fails cleanly) rather than streaming
+hundreds of megabytes into a hackathon-scoped MVP. This is exactly what
+`docs/ARCHITECTURE.md`'s original Phase 5 brief asked for ("do not blindly download
+enormous datasets; identify the smallest practical retrieval"). The streaming download
+code itself is real and correct — it would succeed today for any product under the cap
+— and the architecture explicitly leaves room for a follow-up that requests individual
+bands/subsets (much smaller) instead of the full SAFE archive, without changing the
+provider interface.
+
+### 17.5 AOI, dates, and cloud cover — request shape
+
+The frontend is unchanged and still sends `aoi: {north, south, east, west}`. Two new
+**optional** fields were added to `POST /api/v1/process`, additive and backward
+compatible:
+
+```json
+{
+  "aoi": {"north": 25.7, "south": 20.6, "east": 81.6, "west": 72.4},
+  "analysis_name": "Coastal Delta — Sundarbans",
+  "scale_factor": 4,
+  "start_date": "2026-08-01",
+  "end_date": "2026-09-01",
+  "max_cloud_cover": 20
+}
+```
+
+If `start_date`/`end_date`/`max_cloud_cover` are omitted (the existing frontend never
+sends them), `SatelliteService` applies documented defaults: the last 30 days, and a
+20% max cloud cover. The resolved values are stored alongside the AOI bounds in the
+existing `aoi_geometry` JSON column (no new `ProcessingJob` columns needed) under a
+nested `search` key.
+
+### 17.6 Scene ranking (deterministic, documented, never random)
+
+`BaseSatelliteProvider.select_best_scene` (shared by every provider, including the
+fake one used in tests) ranks candidates by:
+
+1. **AOI coverage** — bounding-box overlap ratio between the scene's footprint and the
+   requested AOI (pure Python, no shapely/GDAL dependency — real polygon intersection
+   is Phase 7 territory and isn't needed here since the search query already filters to
+   intersecting scenes; this only affects tie-break order).
+2. **Cloud cover**, ascending.
+3. **Acquisition date distance from the requested `end_date`**, ascending.
+
+### 17.7 Database change
+
+One new table, additive only — no existing table was redesigned:
+
+```
+satellite_scenes
+  id                     UUID PK
+  processing_job_id      UUID FK -> processing_jobs.id, unique (one scene per job)
+  provider               TEXT           -- 'copernicus'
+  product_id             TEXT
+  product_name           TEXT
+  collection             TEXT           -- 'SENTINEL-2'
+  platform               TEXT NULL      -- e.g. 'Sentinel-2C'
+  instrument             TEXT NULL      -- 'MSI'
+  acquisition_datetime   TIMESTAMPTZ NULL
+  cloud_cover            FLOAT NULL
+  footprint              JSONB NULL     -- real GeoJSON Polygon
+  size_bytes             BIGINT NULL
+  source_url             TEXT NULL
+  download_status        TEXT           -- pending | downloading | completed | failed | skipped
+  download_path          TEXT NULL
+  download_error         TEXT NULL
+  created_at             TIMESTAMPTZ
+```
+
+`ProcessingJob` gained one new relationship (`satellite_scene`), no new columns.
+`Image -> ProcessingJob -> Result` is untouched; `ProcessingJob -> SatelliteScene` is a
+parallel, optional one-to-one edge for AOI-driven jobs only.
+
+### 17.8 Real vs. mocked, precisely
+
+| Step | Status |
+|---|---|
+| AOI capture (frontend map) | Real (Phase 2/4, unchanged) |
+| AOI validation (bounds, dates, cloud cover) | Real |
+| Copernicus OAuth2 authentication | Real code; unverified live (no credentials available) |
+| Sentinel-2 catalog search | Real, **verified live** against the production CDSE API |
+| Scene ranking/selection | Real, deterministic |
+| Scene metadata persistence | Real |
+| Scene download | Real code, size-capped by design (see §17.4) |
+| Super-resolution | **Mock** — MockProcessor, unchanged since Phase 3 |
+| PSNR/SSIM/LPIPS | **Mock** — unchanged since Phase 3 |
+| GeoTIFF / CRS preservation | Not yet — Phase 7 |
+
+---
+
+Phase 5 complete. Phase 6 (AI super-resolution) has explicitly **not** been started —
+see backend/README.md for the full Phase 5 report.

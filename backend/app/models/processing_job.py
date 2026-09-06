@@ -72,3 +72,8 @@ class ProcessingJob(Base):
     result: Mapped["Result | None"] = relationship(  # noqa: F821
         back_populates="job", cascade="all, delete-orphan", uselist=False
     )
+    # Phase 5: present only for AOI-driven jobs where a real Sentinel-2 scene
+    # was identified (and possibly retrieved) via SatelliteService.
+    satellite_scene: Mapped["SatelliteScene | None"] = relationship(  # noqa: F821
+        back_populates="processing_job", cascade="all, delete-orphan", uselist=False
+    )
