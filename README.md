@@ -39,6 +39,17 @@ SIH/
     └── README.md            Backend setup, API reference, Phase 5 satellite details
 ```
 
+## Run locally
+
+Once both servers are up (see Quickstart below), the app is here:
+
+| URL | What it is |
+|---|---|
+| [http://localhost:5173](http://localhost:5173) | The app itself — start here |
+| [http://localhost:8000/api/v1](http://localhost:8000/api/v1) | Backend API base |
+| [http://localhost:8000/docs](http://localhost:8000/docs) | Interactive Swagger API docs |
+| [http://localhost:8000/api/v1/health](http://localhost:8000/api/v1/health) | Health check (DB connectivity) |
+
 ## Quickstart
 
 Requires Python 3.11+, Node 18+, and (optionally) Docker for Postgres — a
