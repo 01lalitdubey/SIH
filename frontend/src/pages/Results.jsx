@@ -12,7 +12,12 @@ import ErrorState from "../components/ui/ErrorState";
 import LoadingState from "../components/ui/LoadingState";
 import MetricCard from "../components/ui/MetricCard";
 import StatusBadge from "../components/ui/StatusBadge";
-import { classifyFailure, displayModelName, toBadgeStatus } from "../lib/jobStatus";
+import {
+  classifyFailure,
+  displayModelName,
+  displaySatelliteProvider,
+  toBadgeStatus,
+} from "../lib/jobStatus";
 
 const listVariants = {
   hidden: {},
@@ -136,6 +141,13 @@ export default function Results() {
             <p className="mt-2 text-center text-xs text-text-muted">
               Drag the handle to compare before and after
             </p>
+            {job.satellite_scene && (
+              <p className="mt-1 text-center text-xs text-text-muted">
+                Satellite source: {displaySatelliteProvider(job.satellite_scene.provider)}
+                {job.satellite_scene.cloud_cover != null &&
+                  ` · ${job.satellite_scene.cloud_cover.toFixed(1)}% cloud cover`}
+              </p>
+            )}
           </motion.div>
 
           <motion.div variants={itemVariants} className="mt-8">

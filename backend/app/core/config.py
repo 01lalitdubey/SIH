@@ -36,6 +36,21 @@ class Settings(BaseSettings):
     satellite_http_timeout_seconds: float = 30.0
     satellite_max_scenes_considered: int = 20
 
+    # --- Phase 6.3: satellite provider selection + Google Earth Engine -----
+    # 'copernicus' (default), 'gee', or 'fake' (test-only) — see
+    # app/services/satellite/service.py. Never silently falls back between
+    # providers.
+    satellite_provider: str = "copernicus"
+    # Google Cloud service-account auth, backend-only — see
+    # app/services/satellite/gee.py. Left blank by default; SATELLITE_PROVIDER=gee
+    # then fails with a clear MissingCredentialsError instead of silently
+    # using another provider.
+    gee_project_id: str | None = None
+    gee_service_account_email: str | None = None
+    # Path to the service-account JSON key, relative to backend/ or absolute.
+    # NEVER commit the key file itself — see backend/.gitignore.
+    gee_service_account_key_path: str | None = None
+
     # --- Phase 6: AI super-resolution ---------------------------------------
     # 'mock' (default, safe) or 'super_resolution' (real PyTorch inference).
     # Never silently falls back from super_resolution to mock — see

@@ -26,6 +26,7 @@ import { cn } from "../lib/cn";
 import {
   classifyFailure,
   displayModelName,
+  displaySatelliteProvider,
   stageKeyToIndex,
   toProcessingUiStatus,
 } from "../lib/jobStatus";
@@ -469,8 +470,9 @@ export default function Process() {
                   transition={{ duration: 0.15 }}
                 >
                   <p className="mb-3 text-xs text-text-muted">
-                    Draw a rectangle to define your AOI. Satellite search will connect to
-                    Copernicus Data Space in Phase 5 — this map uses mock tiles/data only.
+                    Draw a rectangle to define your AOI. Satellite search uses{" "}
+                    {displaySatelliteProvider(processorStatus?.satellite_provider)} — the map
+                    itself uses mock tiles/data only.
                   </p>
                   <AOIMap onAoiChange={setAoi} />
                 </motion.div>

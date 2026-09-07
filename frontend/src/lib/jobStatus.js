@@ -47,6 +47,20 @@ export function displayModelName(modelName) {
   return MODEL_DISPLAY_NAMES[modelName] ?? modelName;
 }
 
+const SATELLITE_PROVIDER_LABELS = {
+  copernicus: "Copernicus Data Space (Sentinel-2)",
+  gee: "Google Earth Engine (Sentinel-2 SR Harmonized)",
+  fake: "a test/fake provider — no real satellite data",
+};
+
+/** Backend `satellite_provider` (from /health) -> a human label. Falls back
+ * to the raw value so an unrecognized future provider is still shown
+ * truthfully rather than hidden. */
+export function displaySatelliteProvider(provider) {
+  if (!provider) return "an unconfigured provider";
+  return SATELLITE_PROVIDER_LABELS[provider] ?? provider;
+}
+
 /**
  * Categorizes a failed job's error using signals the backend actually
  * provides — `current_stage` staying "satellite_acquisition" is set by

@@ -23,6 +23,8 @@ def test_health(client):
     assert body["processor_ready"] is True
     assert body["model_name"] is None
     assert body["scale_factor"] is None
+    # Phase 6.3: which satellite provider AOI jobs will use.
+    assert body["satellite_provider"] == "copernicus"
 
 
 def test_upload_valid_image(client, sample_image_bytes):

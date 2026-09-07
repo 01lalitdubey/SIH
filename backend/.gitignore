@@ -18,3 +18,11 @@ satellite/*
 # `python -m ai.training.train` (see backend/README.md).
 ai/checkpoints/*
 !ai/checkpoints/.gitkeep
+
+# Phase 6.3: Google Earth Engine service-account key. A specific path, not a
+# blanket *.json rule — this repo may contain legitimate JSON files. NEVER
+# commit a real key here regardless of what filename/location is used.
+credentials/
+secrets/
+*service-account*.json
+gee-key*.json

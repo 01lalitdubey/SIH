@@ -10,6 +10,7 @@ structurally real checkpoint to load and run real tensor inference against.
 
 import uuid
 
+import numpy as np
 import pytest
 
 torch = pytest.importorskip("torch")
@@ -305,6 +306,73 @@ def test_corrupt_input_image_fails_job_clearly(monkeypatch, tmp_path, trained_ch
 
         assert job.status == JobStatus.FAILED
         assert "ai inference failed" in job.error_message.lower()
+    finally:
+        session.close()
+
+
+def test_gee_normalized_output_is_compatible_with_super_resolution_processor(
+    monkeypatch, tmp_path, trained_checkpoint
+):
+    """Phase 6.3: proves — empirically, not just by comment — that a real
+    Sentinel-2 SR reflectance array, run through GEESatelliteProvider's own
+    normalization (app/services/satellite/gee.py:_reflectance_to_uint8_rgb)
+    and saved exactly as that provider saves it, is then correctly consumed
+    by the real, unmodified SuperResolutionProcessor preprocessing path,
+    end to end — not just structurally compatible in theory."""
+    import tifffile
+
+    from app.services.satellite.gee import _reflectance_to_uint8_rgb
+
+    raw_reflectance = (np.random.rand(3, 16, 16) * 4000).astype(np.uint16)  # realistic S2 SR values
+    rgb_uint8 = _reflectance_to_uint8_rgb(raw_reflectance)
+    input_path = tmp_path / "gee_scene.tif"
+    tifffile.imwrite(input_path, rgb_uint8, photometric="rgb")
+
+    monkeypatch.setattr(get_settings(), "sr_checkpoint_path", str(trained_checkpoint))
+    processor = SuperResolutionProcessor()
+
+    image = Image(
+        filename="gee_scene.tif",
+        stored_filename=f"{uuid.uuid4().hex}.tif",
+        file_path=str(input_path),
+        file_type="image/tiff",
+        file_size=input_path.stat().st_size,
+        width=16,
+        height=16,
+    )
+    session = db_module.SessionLocal()
+    try:
+        session.add(image)
+        session.commit()
+        session.refresh(image)
+
+        job = ProcessingJob(
+            image_id=image.id,
+            analysis_name="GEE compatibility test",
+            scale_factor=2,
+            status=JobStatus.QUEUED,
+            progress=0,
+        )
+        session.add(job)
+        session.commit()
+        session.refresh(job)
+
+        processor.run(job.id)
+        session.refresh(job)
+
+        assert job.status == JobStatus.COMPLETED
+
+        from app.services import result_service
+
+        result = result_service.get_result_by_job(session, job.id)
+        assert result is not None
+        assert result.is_mock is False
+        assert result.metrics_available is False  # never fabricated
+        assert result.psnr is None
+        assert result.ssim is None
+        # 16x16 input, 2x model -> 32x32 output — actually produced, not assumed.
+        assert result.output_width == 32
+        assert result.output_height == 32
     finally:
         session.close()
 

@@ -20,3 +20,11 @@ pytest==8.3.4
 # driver's CUDA version, see https://pytorch.org/get-started/locally/):
 #   pip install torch --index-url https://download.pytorch.org/whl/cu121
 numpy>=1.24
+
+# Phase 6.3: Google Earth Engine satellite provider (SATELLITE_PROVIDER=gee).
+# Not required for the default 'copernicus' or 'fake' providers —
+# app/services/satellite/service.py only imports app/services/satellite/gee.py
+# (and therefore these packages) when SATELLITE_PROVIDER=gee is actually
+# selected.
+#   pip install earthengine-api tifffile imagecodecs
+

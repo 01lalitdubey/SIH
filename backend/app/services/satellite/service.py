@@ -27,6 +27,7 @@ from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.models.processing_job import ProcessingJob
 from app.models.satellite_scene import DownloadStatus, SatelliteScene
 from app.services.satellite.base import AOIPolygon, BaseSatelliteProvider, SearchParams
@@ -44,7 +45,32 @@ DEFAULT_SEARCH_WINDOW_DAYS = 30
 DEFAULT_MAX_CLOUD_COVER = 20.0
 MAX_SEARCH_WINDOW_DAYS = 366
 
-_provider: BaseSatelliteProvider = CopernicusSatelliteProvider()
+
+def _build_provider() -> BaseSatelliteProvider:
+    """SATELLITE_PROVIDER selects the real implementation behind
+    BaseSatelliteProvider — same pattern as processing_service._build_processor
+    for PROCESSOR_MODE. An unknown value is a startup-time config error, not
+    a silent fallback. The gee/fake imports are local so selecting
+    'copernicus' (the default) never requires earthengine-api installed."""
+    mode = get_settings().satellite_provider
+    if mode == "copernicus":
+        return CopernicusSatelliteProvider()
+    if mode == "gee":
+        from app.services.satellite.gee import GEESatelliteProvider
+
+        return GEESatelliteProvider()
+    if mode == "fake":
+        from app.services.satellite.fake import FakeSatelliteProvider
+
+        return FakeSatelliteProvider()
+    raise ValueError(f"Unknown SATELLITE_PROVIDER '{mode}'. Expected 'copernicus', 'gee', or 'fake'.")
+
+
+# Single shared instance — swapping providers is this one call, not a
+# rewrite of SatelliteService. Same singleton-at-import-time tradeoff as
+# processing_service._processor: changing SATELLITE_PROVIDER requires a
+# backend restart.
+_provider: BaseSatelliteProvider = _build_provider()
 _storage: BaseSatelliteStorage = LocalSatelliteStorage()
 
 

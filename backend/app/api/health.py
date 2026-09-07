@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.core.database import get_db
 from app.services import processing_service
 
@@ -24,5 +25,10 @@ def health_check(db: Session = Depends(get_db)) -> dict:
         "status": "ok",
         "service": "srm-backend",
         "database": db_status,
+        # Phase 6.3: which satellite provider AOI jobs will use — just the
+        # configured name, not live readiness (unlike processor_status
+        # above, checking that would mean a real network call to Copernicus
+        # or GEE on every health check, which this endpoint doesn't do).
+        "satellite_provider": get_settings().satellite_provider,
         **processor_status,
     }

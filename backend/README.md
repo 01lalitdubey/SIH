@@ -642,7 +642,7 @@ GET /api/v1/health  ->  {"processor_mode":"super_resolution","is_mock":false,
   were reviewed by hand, but that is a real limitation worth stating plainly
   rather than claiming a browser test that didn't happen.
 
-## Phase 6.3 — real Copernicus credentials, live-tested
+## Phase 6.2.1 — real Copernicus credentials, live-tested
 
 A real OAuth client-credentials pair was configured in `backend/.env` and
 tested live against the actual CDSE API (not simulated). Results, honestly:
@@ -678,3 +678,157 @@ through scene selection; the last leg (raw product download) is blocked by
 an account/OAuth-client configuration issue on the Copernicus side, not by
 anything in this codebase. **Upload Image → EDSRLite** (Workflow A) is
 unaffected and fully real end-to-end regardless of Copernicus status.
+
+## Phase 6.3 — Google Earth Engine AOI integration
+
+A second satellite provider — Google Earth Engine (GEE) — behind the same
+`BaseSatelliteProvider` interface Copernicus already uses, selected via
+`SATELLITE_PROVIDER` (`copernicus` default, `gee`, or `fake`, test-only).
+Copernicus is untouched and remains the default; switching providers never
+silently falls back between them (an unknown value is a startup config
+error, same discipline as `PROCESSOR_MODE`).
+
+### Architecture
+
+```
+SatelliteService
+      |
+      v
+BaseSatelliteProvider
+      |
+      +-- CopernicusSatelliteProvider  (Phase 5, default)
+      +-- GEESatelliteProvider         (this phase)
+      +-- FakeSatelliteProvider        (test-only)
+```
+
+`app/services/satellite/service.py::_build_provider()` mirrors
+`processing_service._build_processor()` exactly — one factory, module-level
+singleton, selected once at process startup.
+
+### Dataset, bands, and why RGB-only
+
+`COPERNICUS/S2_SR_HARMONIZED` (Sentinel-2 L2A surface reflectance) via
+`ee.ImageCollection`. Bands are **exactly `B4, B3, B2`** (Red, Green, Blue) —
+not the 4-band `B4/B3/B2/B8` some earlier GEE integrations use — because the
+already-trained Phase 6 EDSRLite checkpoint has 3 input channels. Adding
+NIR would break that checkpoint's input shape outright, not just change the
+image; retraining is explicitly out of scope for this phase. `B8` never
+appears anywhere in `app/services/satellite/gee.py`.
+
+### The real compatibility bug this phase found (and fixed correctly)
+
+Sentinel-2 SR bands are uint16 reflectance scaled by 10000 (the same
+`REFLECTANCE_SCALE` convention `ai/datasets/sen2venus.py` already uses for
+training data). The obvious approach — download the raw GeoTIFF from GEE
+and hand it to the existing pipeline unmodified — was tested directly and
+found to be silently wrong:
+
+```
+>>> # a synthetic 16-bit 3-band TIFF with real values up to ~5000
+>>> PILImage.open(path).convert("RGB")  # what SuperResolutionProcessor._load_and_normalize does
+>>> np.array(img).dtype, np.array(img).max()
+(dtype('uint8'), 19)
+```
+
+`SuperResolutionProcessor._load_and_normalize` only branches on `uint16` vs.
+8-bit *after* calling PIL's `.convert("RGB")` — and that call silently
+collapses 16-bit multi-band data to 8-bit using PIL's own arbitrary
+rescaling, not a reflectance-aware one. The `uint16` branch in that function
+is effectively dead code for any real 16-bit input; passing raw GEE
+reflectance straight through would have been silently, badly wrong (not a
+crash — worse, a plausible-looking but incorrect image feeding the AI model).
+
+The fix: `GEESatelliteProvider.download_scene()` does the
+reflectance→[0,1]→8-bit conversion itself, once, at acquisition time
+(`_reflectance_to_uint8_rgb` in `gee.py`), and saves an already-correct
+8-bit 3-band TIFF. A second direct test confirmed that file round-trips
+through PIL byte-for-byte with zero further transformation — exactly what
+`_load_and_normalize`'s existing (unmodified) 8-bit branch expects.
+`SuperResolutionProcessor` was not touched.
+
+### Resolution
+
+Requested at `scale=10` (B2/B3/B4's true native resolution). EDSRLite then
+performs its trained 2× super-resolution, so the output represents
+*approximately* 5m/pixel — this is AI-predicted detail, not a claim of
+native 5m-resolution satellite observation. The frontend and this document
+consistently say "AI-enhanced 2× super-resolution," never "native 5m
+Sentinel-2 imagery."
+
+### AOI size limit (synchronous download only)
+
+`ee.Image.getDownloadURL()` has a real, documented ceiling — "Maximum
+request size is 32 MB, maximum grid dimension is 10000" (from the installed
+`earthengine-api` source, not a guess). `gee.py`'s `_estimate_request_bytes`
+pre-flight-checks the requested AOI against that limit (at 10m/pixel, 3
+bands, uint16) and fails with a clear "Selected AOI is too large for
+synchronous Google Earth Engine processing" error rather than letting the
+job hang or silently truncating/downsampling the request. Large-AOI async
+export (`Export.image.toDrive`/`toCloudStorage`, which needs task
+tracking/polling) is explicitly out of scope for this phase.
+
+### Authentication
+
+Backend-only Google Cloud service-account auth — `GEE_PROJECT_ID`,
+`GEE_SERVICE_ACCOUNT_EMAIL`, `GEE_SERVICE_ACCOUNT_KEY_PATH` (path to the
+service-account JSON key). Never exposed to the frontend, never logged, and
+the key file itself is gitignored via specific patterns
+(`backend/.gitignore`: `credentials/`, `secrets/`, `*service-account*.json`,
+`gee-key*.json`) rather than a blanket `*.json` rule, since the repo may
+contain legitimate JSON files elsewhere. `earthengine-api` (and `tifffile`,
+already present from Phase 6) is only imported when `SATELLITE_PROVIDER=gee`
+is actually selected — `import ee` happens lazily inside `gee.py`'s `_ee()`
+method, never at module import time, so `SATELLITE_PROVIDER=copernicus`
+never requires the package installed.
+
+### What was actually verified this session
+
+- **Unit tests (28 new, `tests/test_gee_provider.py`)**: provider
+  selection/config, missing-credentials/missing-project/missing-key-file
+  errors, real `ee.ServiceAccountCredentials`/`ee.Initialize` call
+  verification, AOI→`ee.Geometry.Rectangle` coordinate order
+  (`[west, south, east, north]` — verified explicitly, since getting this
+  backwards is an easy, silent mistake), collection/date/cloud-cover filter
+  construction, empty-results handling, `SceneCandidate` conversion,
+  download HTTP-error/empty/oversized/undecodable handling, the AOI
+  synchronous-size guard (checked against both an AOI safely under and
+  safely over the real 32MB ceiling), and the reflectance-normalization
+  math itself (exact expected pixel values, clipping of >10000 values,
+  band-order-agnostic shape handling).
+- **A dedicated integration test**
+  (`tests/test_ai_processor.py::test_gee_normalized_output_is_compatible_with_super_resolution_processor`)
+  that doesn't just assert compatibility in a comment: it runs a synthetic
+  but realistic reflectance array through the provider's own normalization,
+  saves it exactly as the provider would, and then actually runs it through
+  real `SuperResolutionProcessor` + a real trained checkpoint end-to-end,
+  asserting `COMPLETED`, `is_mock: false`, and correct 2× output dimensions.
+- **Live, no-credentials verification against a running server**: started
+  the backend with `SATELLITE_PROVIDER=gee` (no `earthengine-api` crash —
+  the lazy import genuinely works) and submitted a real AOI job. It failed
+  with `current_stage: satellite_acquisition` and
+  `"Google Earth Engine credentials are not configured (GEE_PROJECT_ID / GEE_SERVICE_ACCOUNT_EMAIL / GEE_SERVICE_ACCOUNT_KEY_PATH)."`
+  — correctly categorized as a satellite failure, not an AI model failure,
+  by the frontend's existing `classifyFailure()` (Phase 6.2), with zero
+  frontend changes needed for that distinction.
+- **Live, real GEE acquisition was NOT executed** — no Google Earth Engine
+  service-account credentials were available in this session. This is
+  stated plainly rather than fabricated; only the no-credentials failure
+  path above was verified against a live server.
+- **Regression**: Workflow A (Upload Image) re-verified end-to-end against
+  the same running server after all Phase 6.3 changes —
+  `satellite_scene: null`, `is_mock: false`, `model_name: edsr_satellite`,
+  `device: cpu`, 32×32 input → 64×64 output — unaffected by adding a second
+  provider.
+- Full backend suite: 100 passed (94 pre-existing + 28 new GEE tests + 1
+  compatibility integration test − minor renumbering from folding the
+  Phase 6.2.1 Copernicus section above into this one's numbering).
+  `npm run build` and `npm run lint` both clean on the frontend.
+
+### Environment variables (new this phase)
+
+| Variable | Purpose |
+|---|---|
+| `SATELLITE_PROVIDER` | `copernicus` (default), `gee`, or `fake` (test-only) |
+| `GEE_PROJECT_ID` | Google Cloud project ID associated with Earth Engine access |
+| `GEE_SERVICE_ACCOUNT_EMAIL` | Service account email |
+| `GEE_SERVICE_ACCOUNT_KEY_PATH` | Path (relative to `backend/`, or absolute) to the service-account JSON key — never commit this file |
