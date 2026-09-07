@@ -1,7 +1,9 @@
 import { motion } from "framer-motion";
 import { LayoutDashboard, ScanLine, Sparkles, X } from "lucide-react";
 import { NavLink } from "react-router-dom";
+import { useProcessorStatus } from "../../hooks/useProcessorStatus";
 import { cn } from "../../lib/cn";
+import { displayModelName } from "../../lib/jobStatus";
 
 const NAV_ITEMS = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -44,7 +46,24 @@ function NavItem({ to, label, icon: Icon, onNavigate, scope }) {
   );
 }
 
+/** Truthful to the backend's actual processor — never a hardcoded claim.
+ * Mirrors the banner logic in pages/Process.jsx, condensed for the footer's
+ * one-line space. */
+function processorFooterText(status) {
+  if (!status) return null;
+  if (status.processor_mode === "super_resolution") {
+    if (status.processor_ready) {
+      return `Real AI processing • ${displayModelName(status.model_name)} ${status.scale_factor}×`;
+    }
+    return "Real AI model unavailable";
+  }
+  return "Mock processing mode";
+}
+
 function SidebarContent({ onNavigate, scope }) {
+  const processorStatus = useProcessorStatus();
+  const footerText = processorFooterText(processorStatus);
+
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-2 px-4 py-5">
@@ -65,8 +84,18 @@ function SidebarContent({ onNavigate, scope }) {
 
       <div className="border-t border-border px-4 py-4">
         <p className="text-[11px] text-text-muted">
-          Processing is currently <span className="text-warning">mocked</span> for MVP
-          development.
+          {footerText === null ? (
+            <span>&nbsp;</span>
+          ) : footerText === "Mock processing mode" ? (
+            <>
+              Processing is currently <span className="text-warning">mocked</span> for MVP
+              development.
+            </>
+          ) : footerText === "Real AI model unavailable" ? (
+            <span className="text-danger">{footerText}</span>
+          ) : (
+            <span className="text-success">{footerText}</span>
+          )}
         </p>
       </div>
     </div>

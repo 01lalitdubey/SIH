@@ -12,7 +12,7 @@ import ErrorState from "../components/ui/ErrorState";
 import LoadingState from "../components/ui/LoadingState";
 import MetricCard from "../components/ui/MetricCard";
 import StatusBadge from "../components/ui/StatusBadge";
-import { toBadgeStatus } from "../lib/jobStatus";
+import { classifyFailure, displayModelName, toBadgeStatus } from "../lib/jobStatus";
 
 const listVariants = {
   hidden: {},
@@ -97,7 +97,7 @@ export default function Results() {
 
       {job.status === "failed" ? (
         <ErrorState
-          title="Analysis failed"
+          title={classifyFailure(job)?.title ?? "Analysis Failed"}
           description={
             job.error_message || "This job failed during processing. Try running a new analysis."
           }
@@ -139,7 +139,25 @@ export default function Results() {
           </motion.div>
 
           <motion.div variants={itemVariants} className="mt-8">
-            <CardHeader title="Evaluation Metrics" subtitle="Mocked values — real in Phase 7" />
+            <CardHeader
+              title="Evaluation Metrics"
+              subtitle={
+                result?.is_mock
+                  ? "Simulated values — for demonstration only"
+                  : result?.metrics_available
+                    ? "Computed against reference imagery"
+                    : "Quality metrics are available for validated reference imagery"
+              }
+              action={
+                result && (
+                  <span className="rounded-full border border-border-strong bg-bg-elevated px-2.5 py-1 text-xs font-medium text-text-secondary">
+                    {result.is_mock
+                      ? "Mock pipeline"
+                      : `${displayModelName(result.model_name)} · AI-enhanced · ${result.device ?? "cpu"}`}
+                  </span>
+                )
+              }
+            />
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <MetricCard
                 label="PSNR"
@@ -164,6 +182,12 @@ export default function Results() {
                 ringPercent={result?.lpips ? (1 - result.lpips) * 100 : undefined}
               />
             </div>
+            {result && !result.is_mock && !result.metrics_available && (
+              <p className="mt-3 text-xs text-text-muted">
+                Metrics unavailable for this inference — there is no ground-truth
+                high-resolution image to compare the model&apos;s predicted output against.
+              </p>
+            )}
           </motion.div>
 
           <motion.div variants={itemVariants}>

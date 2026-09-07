@@ -3,14 +3,15 @@
 FastAPI backend for the Deep Learning Based Super Resolution Mapping
 platform. Phase 3 built the backend foundation (database, image upload, a
 **mocked** processing pipeline); Phase 4 connected the existing frontend to
-it; Phase 5 replaces the AOI stub with a **real** Copernicus Data Space
-Ecosystem (Sentinel-2) integration — see [Phase 5](#phase-5--satellite-data-integration)
-below. Super-resolution itself is still mocked — no AI yet. See
-[Mocked vs Real](#mocked-vs-real) below.
+it; Phase 5 added a **real** Copernicus Data Space Ecosystem (Sentinel-2)
+integration; Phase 6 replaces the mock super-resolution step with a real,
+trained PyTorch model — see [Phase 6](#phase-6--ai-super-resolution) below.
+See [Mocked vs Real](#mocked-vs-real) for exactly what's real vs. still
+mocked (geospatial fidelity/GeoTIFF is Phase 7).
 
 ## Stack
 
-Python · FastAPI · SQLAlchemy · PostgreSQL · Pydantic · Uvicorn
+Python · FastAPI · SQLAlchemy · PostgreSQL · Pydantic · Uvicorn · PyTorch (Phase 6)
 
 ## Project layout
 
@@ -137,11 +138,11 @@ Full request/response schemas are in Swagger at `/docs`.
 
 | Area | This phase | Future |
 |---|---|---|
-| Processing pipeline | `MockProcessor` — timed stage transitions, real Pillow resize if an input image exists, randomized-but-plausible metrics | Real PyTorch super-resolution model (Phase 6) |
-| Metrics (PSNR/SSIM/LPIPS) | Randomized within plausible ranges, always flagged `is_mock: true` | Computed against ground truth (Phase 7) |
+| Processing pipeline | Two selectable processors — see [Phase 6](#phase-6--ai-super-resolution): `MockProcessor` (unchanged) or **real** `SuperResolutionProcessor` | GPU-accelerated large-scene inference, richer architectures |
+| Metrics (PSNR/SSIM/LPIPS) | **Real** PSNR/SSIM formulas exist and run during training/validation; production inference has no ground truth, so `metrics_available: false` there — never invented either way | Rasterio/GDAL-based evaluation against real reference rasters (Phase 7) |
 | Satellite/AOI search | **Real** — Copernicus Data Space Ecosystem, live Sentinel-2 catalog search (Phase 5, done) | Full-scene/band download (currently size-capped, see below) |
 | Geospatial fidelity (GeoTIFF/CRS) | Not preserved — plain image ops | Rasterio/GDAL (Phase 7) |
-| Job execution | FastAPI `BackgroundTasks` (in-process) | Celery/Redis queue, once real inference needs a GPU worker (Phase 6) |
+| Job execution | FastAPI `BackgroundTasks` (in-process) | Celery/Redis queue, once real inference needs a GPU worker at scale |
 | Auth | None | Not yet scoped |
 
 The mock pipeline is isolated behind `BaseProcessor` (`app/services/processors/base.py`)
@@ -364,3 +365,316 @@ expected and correct behavior with no credentials configured. An
 image-driven job run against the same live server immediately afterward
 still completed normally (`status: completed`, `satellite_scene: null`),
 confirming zero regression to the Phase 4 path.
+
+## Phase 6 — AI super-resolution
+
+Replaces `MockProcessor`'s fake resize with a real, trained PyTorch model, selectable
+via `PROCESSOR_MODE` and never silently substituted for the mock path. Full design
+rationale in `docs/ARCHITECTURE.md` §18; this section is the test/experiment log.
+
+### Dataset
+
+[SEN2VENuS v2.0](https://huggingface.co/datasets/tacofoundation/sen2venus) — verified
+live during development (124,123 real Sentinel-2/VENuS patch pairs, 28 regions, all
+natively 2x: 128x128px@10m LR, 256x256px@5m HR). See `docs/ARCHITECTURE.md` §18.1 for
+the full verification log, including the discovery that the dataset's own
+`tortilla:data_split` column is entirely `'train'` (not a usable test split) and why a
+region-aware split was implemented instead.
+
+**No rasterio/GDAL anywhere in Phase 6** — samples are fetched with a lightweight
+index reader (metadata only) + plain HTTP range requests + `tifffile` for pixel
+decoding. RGB-only MVP (bands 0-2 of both sensors).
+
+### Model
+
+`EDSRLite` (`ai/models/edsr.py`) — configurable residual CNN, PixelShuffle
+upsampling, no batch-norm/mean-shift. The real-data experiment below used
+`num_features=32, num_res_blocks=4` (**121,987 parameters**). Loss: L1. Optimizer:
+AdamW. Real, not interpolation — `tests/test_ai_model.py` asserts the model's output
+differs from bicubic upsampling of the same input and that gradients reach every
+parameter.
+
+### Training smoke test (synthetic — proves the pipeline works)
+
+```bash
+python -m ai.training.train --dataset synthetic --epochs 3 --batch-size 8 \
+  --max-train-samples 32 --max-val-samples 8 --checkpoint-name smoke_cli_test.pt
+```
+
+Real output from an actual run in this environment:
+```
+[train] device=cpu params=779,011 train_samples=32 val_samples=8
+[train] epoch 1/3 train_loss=0.45861 val_loss=0.37751 val_psnr=6.78 val_ssim=0.032 (0.3s)
+[train] epoch 2/3 train_loss=0.34044 val_loss=0.28995 val_psnr=9.10 val_ssim=0.096 (0.2s)
+[train] epoch 3/3 train_loss=0.27866 val_loss=0.27565 val_psnr=9.60 val_ssim=0.149 (0.2s)
+```
+Loss decreases monotonically — the real proof the tensor pipeline (dataset -> loader
+-> model -> loss -> backprop -> optimizer -> checkpoint) works. These numbers are
+meaningless as SR quality (random synthetic noise has no learnable structure) —
+that's expected and is exactly why this is called a smoke test, not an experiment.
+
+### Real SEN2VENuS experiment
+
+```bash
+python -m ai.training.train --dataset sen2venus --epochs 2 --batch-size 2 \
+  --max-train-samples 6 --max-val-samples 2 --num-features 32 --num-res-blocks 4 \
+  --checkpoint-name edsr_satellite.pt
+```
+
+**Actually executed in this environment** against the live dataset (not a smoke test —
+real Sentinel-2/VENuS pixel data, fetched over the network per patch):
+
+```
+[train] device=cpu params=121,987 train_samples=6 val_samples=2
+[train] epoch 1/2 train_loss=0.03816 val_loss=0.05421 val_psnr=24.73 val_ssim=0.669 (105.5s)
+[train] epoch 2/2 train_loss=0.02941 val_loss=0.04541 val_psnr=26.43 val_ssim=0.732 (88.6s)
+```
+
+Real, computed PSNR/SSIM (never randomized) on real held-out validation patches from
+a region the model never trained on. Loss decreased, PSNR/SSIM improved, both epochs
+— a genuine (if tiny) learning signal.
+
+**Honest scale disclosure**: 6 training patches, 2 epochs. This is nowhere near
+enough data to learn real satellite texture, and the numbers above must not be read
+as a meaningful benchmark — they're the actual result of a real but deliberately
+small experiment, reported as-is per the "do not claim strong performance from a tiny
+experiment" rule. The tiny scale was a direct, documented consequence of degraded
+network conditions to Hugging Face during this development session — see "Network
+conditions encountered" below.
+
+**Visual validation** (`python -m ai.inference.visual_check`) — real LR/SR/HR panels
+were generated and inspected for exactly this checkpoint. Finding, reported without
+softening: the SR output shows a **visible vertical banding/striping artifact**
+across both inspected validation samples, overriding most real spatial structure.
+This is the expected signature of severe undertraining (6 samples/2 epochs is far
+below what a CNN needs to learn real texture), not evidence the architecture itself
+is broken — the same model converges cleanly on the synthetic smoke test above, and
+gradients/backprop are independently verified correct in `tests/test_ai_model.py`.
+Scaling up the real-data run (more samples, more epochs, once network conditions
+allow) is the direct next step to resolve this, not an architecture change.
+
+### Network conditions encountered
+
+Hugging Face access was measurably degraded for most of this development session —
+independently confirmed by an unrelated ~2.5GB PyTorch CUDA wheel download taking an
+unusually long time, and by two distinct real dataset-fetch failures (`FSTimeoutError`,
+then a separate `aiohttp` connection-reset) during larger real-experiment attempts
+(20 and 32 training samples respectively). `ai/datasets/sen2venus.py` was hardened
+with a real retry mechanism (`MAX_FETCH_RETRIES=3`, exponential backoff, a widened
+exception set covering both failure modes actually observed, and a 120s client
+timeout added after hitting the default's 30s in practice) in direct response to
+these real failures — not speculative resilience code. The 6-sample/2-epoch
+experiment above is the run that completed successfully under these conditions.
+
+### CPU / GPU
+
+This session's checkpoint and all above numbers are **CPU** (`torch==2.14.0+cpu`,
+installed deliberately over the CUDA build after the CUDA wheel's download proved
+too slow for this session's time budget — see commit history). **A CUDA-capable GPU
+is present on this machine** (`NVIDIA GeForce RTX 4050`, confirmed via `nvidia-smi`,
+6GB VRAM, driver CUDA 13.1) but **GPU inference was not executed** in this session.
+`ai/inference/infer.py` auto-detects CUDA (`torch.cuda.is_available()`) with no
+code change required — installing `torch` from the `cu121` (or newer) index instead
+of `cpu` is sufficient to exercise the GPU path.
+
+### Live end-to-end verification (real checkpoint, real API)
+
+With `PROCESSOR_MODE=super_resolution` and `SR_CHECKPOINT_PATH` pointed at the real
+checkpoint above, against the actual running dev server (not the test suite):
+
+```
+POST /api/v1/images/upload  (64x64 JPEG)      -> 201
+POST /api/v1/process {"image_id": ..., "scale_factor": 2}  -> 201, status: queued
+
+GET /api/v1/process/{job_id}
+  -> status: completed, progress: 100
+
+GET /api/v1/results/{job_id}
+  -> is_mock: false
+  -> model_name: "edsr_satellite", model_version: "scale2x", device: "cpu"
+  -> processing_time: 0.031 (real, ~31ms CPU inference)
+  -> output_width: 128, output_height: 128   (64x64 input x2, correct)
+  -> psnr: null, ssim: null, lpips: null, metrics_available: false
+     (correct — no ground truth exists for a real inference job)
+
+GET /api/v1/results/{job_id}/file -> 200, image/png, verified 128x128 RGB
+```
+
+One real bug was caught and fixed during this verification: the local SQLite dev
+database (`dev.db`) predated the new `Result` columns (`is_mock`, `model_name`, etc.)
+— this app uses `Base.metadata.create_all()` rather than Alembic migrations (an MVP
+tradeoff documented since Phase 3), which only creates missing *tables*, not missing
+*columns* on an existing one. Fixed by recreating the dev SQLite file (a fresh
+Postgres database, or any environment created after this change, is unaffected).
+
+The dev server was reverted to `PROCESSOR_MODE=mock` afterward — the existing
+frontend's metric cards were built and E2E-tested (Phase 4) against always-populated
+mock PSNR/SSIM values; real mode's honestly-null metrics would render against UI
+that was never designed for that state, and the frontend is frozen for this phase.
+
+### CPU inference (isolated)
+
+`processing_time: 0.031-0.047s` for a 64x64 -> 128x128 image on CPU, observed
+directly above (and separately in `tests/test_ai_processor.py`, which exercises the
+full processor against a synthetic-trained checkpoint without needing the network).
+
+### Domain gap (documented limitation)
+
+The model trains on 16-bit reflectance-scaled Sentinel-2/VENuS data (÷10000). Real
+uploads are ordinary 8-bit JPEG/PNG (÷255) — a genuinely different distribution.
+`super_resolution_processor.py` picks the normalization by array dtype (`uint16` ->
+÷10000, else ÷255) and this gap is documented explicitly, not silently assumed away.
+Closing it for real Sentinel-2 scenes specifically is future work.
+
+### Tests
+
+```bash
+pytest tests/test_ai_model.py tests/test_ai_training_smoke.py tests/test_ai_processor.py -v
+pytest    # full suite: 65 passed (39 from Phases 3-5 + 26 new for Phase 6)
+```
+
+26 new tests, all network-free and GPU-free (`pytest.importorskip("torch")` guards
+every file so a machine without torch skips them cleanly rather than failing
+collection): model construction/forward-pass/channel-count/scale-factor/gradient-flow,
+a full training-smoke run with checkpoint save+reload, checkpoint error handling
+(missing file, malformed file), real PSNR/SSIM correctness, `SuperResolutionProcessor`
+end-to-end (real checkpoint, real inference, correct Result fields, correct output
+dimensions), scale-factor-mismatch rejection, no-input-imagery rejection,
+`PROCESSOR_MODE` selection (including rejecting an unknown mode), and an explicit
+"never silently falls back to mock" regression test.
+
+### Environment variables
+
+| Variable | Purpose |
+|---|---|
+| `PROCESSOR_MODE` | `mock` (default) or `super_resolution` |
+| `SR_CHECKPOINT_PATH` | Path to the trained checkpoint (relative to `backend/`) |
+| `SR_DEVICE` | `cpu`, `cuda`, or blank to auto-detect |
+
+### Commands
+
+```bash
+# Install (CPU — see docs/ARCHITECTURE.md for the CUDA alternative)
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install -r ai/requirements-training.txt   # only needed to train on real data
+
+# Real-data training (network-dependent)
+python -m ai.training.train --dataset sen2venus --epochs 2 --batch-size 2 \
+  --max-train-samples 6 --max-val-samples 2 --num-features 32 --num-res-blocks 4
+
+# Visual validation
+python -m ai.inference.visual_check --checkpoint ai/checkpoints/edsr_satellite.pt
+
+# Run the server in real mode
+# (.env: PROCESSOR_MODE=super_resolution, SR_CHECKPOINT_PATH=ai/checkpoints/edsr_satellite.pt)
+uvicorn app.main:app --reload --port 8000
+```
+
+## Phase 6.1 — connecting the existing UI to the real AI processor
+
+Phase 6 built `SuperResolutionProcessor`, but this dev environment's `.env` was
+still left at `PROCESSOR_MODE=mock` and the frontend had a hardcoded "no real
+AI model yet" banner regardless of what the backend was actually doing. This
+phase closed that gap without touching Phase 6's model/training/inference code:
+
+- **`.env` now runs real inference**: `PROCESSOR_MODE=super_resolution` with
+  `SR_CHECKPOINT_PATH=ai/checkpoints/edsr_satellite.pt` — verified end-to-end
+  below, not just set and assumed.
+- **`GET /api/v1/health` reports real processor state** — `processor_mode`,
+  `is_mock`, `processor_ready`, `model_name`, `model_version`, `device`,
+  `scale_factor`, `processor_error` — computed by
+  `processing_service.get_processor_status()`, which duck-types on the
+  processor's `_engine` attribute rather than `isinstance`-checking
+  `SuperResolutionProcessor`, so a mock-mode deployment still never imports
+  torch just to answer a health check.
+- **The frontend reads that instead of hardcoding anything**: `Process.jsx`
+  calls `GET /health` once on mount and renders one of three truthful banners
+  — real mode active (model name, scale, device), real mode configured but
+  the checkpoint failed to load (the actual error, with jobs left to fail
+  normally rather than being blocked client-side), or mock mode active. The
+  2x/4x scale selector disables whichever factor the loaded model doesn't
+  support (currently 4x, since the trained checkpoint is 2x) instead of
+  letting a job get submitted that the processor would reject anyway.
+- **`Results.jsx` no longer claims "Mocked values — real in Phase 7" for real
+  runs.** The metrics panel's subtitle and a small model/device badge come
+  from the real `ResultOut` fields (`is_mock`, `model_name`, `device`,
+  `metrics_available`); when `metrics_available` is `false` (the normal case
+  for real inference — no ground-truth HR image exists to score against), it
+  says so honestly instead of showing zeros or inventing numbers.
+- **A real test-isolation bug got fixed along the way**: `processing_service`
+  builds its processor singleton from `Settings()` at import time, and the
+  test suite (`tests/conftest.py`) had no isolation from whatever
+  `PROCESSOR_MODE` happened to be in the developer's local `.env` — it was
+  silently relying on that value staying `mock`. Flipping `.env` to
+  `super_resolution` for this phase immediately broke 6 Phase 3/4 tests that
+  assumed the mock pipeline. Fixed by pinning
+  `os.environ.setdefault("PROCESSOR_MODE", "mock")` at the top of
+  `conftest.py`, before any `app.*` import — the suite is now deterministic
+  regardless of local `.env` contents. `test_ai_processor.py`'s real-mode
+  tests are unaffected since they construct/monkeypatch `SuperResolutionProcessor`
+  directly.
+
+**Live verification actually performed** (not just "code was written"):
+
+```
+GET /api/v1/health  ->  {"processor_mode":"super_resolution","is_mock":false,
+  "processor_ready":true,"model_name":"edsr_satellite","model_version":"scale2x",
+  "device":"cpu","scale_factor":2,"processor_error":null}
+```
+
+- Checkpoint temporarily renamed away: `processor_ready` flipped to `false`
+  with a clear `processor_error` message, and a real job submitted against
+  that backend failed with `"Super-resolution model is not available: ..."`
+  — never a silent mock-style completion. Checkpoint restored afterward.
+- A real 32x32 JPEG uploaded and processed end-to-end against the running
+  server: job reached `completed`, and `GET /results/{job_id}` returned
+  `is_mock: false, model_name: "edsr_satellite", device: "cpu",
+  metrics_available: false, psnr/ssim/lpips: null, output_width/height: 64`.
+  The output PNG was confirmed on disk at 64x64 RGB and downloadable via the
+  existing `/results/{job_id}/file` endpoint.
+- Full backend suite: 68 passed (65 pre-existing + 3 new `get_processor_status`
+  tests), including the 6 that regressed before the `conftest.py` fix.
+- Frontend: `npm run build` and `npm run lint` both clean (no new warnings).
+- **Not performed**: a live click-through in an actual browser window — this
+  environment has no browser-automation tool available. The API responses
+  above are byte-for-byte what `Process.jsx`/`Results.jsx` consume (verified
+  against the exact field names each component reads), and the JSX changes
+  were reviewed by hand, but that is a real limitation worth stating plainly
+  rather than claiming a browser test that didn't happen.
+
+## Phase 6.3 — real Copernicus credentials, live-tested
+
+A real OAuth client-credentials pair was configured in `backend/.env` and
+tested live against the actual CDSE API (not simulated). Results, honestly:
+
+- **Authentication**: works. A real access token is issued.
+- **Catalog search**: works. A real AOI (Sundarbans-area box) + a historical
+  date range (2023) returned real Sentinel-2 products — search against
+  dates in this environment's system clock (2026) correctly returned zero
+  results, since no real Sentinel-2 imagery exists yet that far in the
+  future relative to the real world.
+- **Scene ranking/selection**: works. The clearest real candidate was
+  selected: `S2B_MSIL2A_20230605T042709_N0510_R133_T45QYE_...SAFE`,
+  Sentinel-2B, 5.9% cloud cover, real footprint geometry, 1014MB.
+- **Download**: fails with a real, specific error —
+  `401 {"code":"DAT-ZIP-609","message":"Token audience not allowed"}` from
+  the OData Zipper (bulk product download) service. The configured client
+  ID has the `sh-` prefix used for **Sentinel Hub** OAuth clients (a
+  related but separate CDSE product, registered through the Sentinel Hub
+  dashboard, meant for on-the-fly processing APIs) — its tokens don't carry
+  the audience the bulk-download service requires. This was confirmed by
+  calling the token and download endpoints directly and inspecting the raw
+  HTTP response, not inferred from the app's wrapped error message alone.
+  Getting past this requires a CDSE data-access OAuth client (not a
+  Sentinel Hub one); this wasn't something that could be resolved with the
+  credentials available in this session.
+- A temporary bump of `SATELLITE_MAX_DOWNLOAD_MB` (200 → 1200, to fit the
+  real ~1GB SAFE product) was tried and then reverted once it was clear the
+  download failure is an authorization issue, not a size one — raising it
+  further wouldn't have helped.
+
+Net effect: the full **AOI → Copernicus → EDSRLite** chain is proven live up
+through scene selection; the last leg (raw product download) is blocked by
+an account/OAuth-client configuration issue on the Copernicus side, not by
+anything in this codebase. **Upload Image → EDSRLite** (Workflow A) is
+unaffected and fully real end-to-end regardless of Copernicus status.

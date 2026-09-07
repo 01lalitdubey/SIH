@@ -1,4 +1,15 @@
 import io
+import os
+
+# Must run before any `app.*` import: processing_service builds its module-
+# level processor singleton from Settings() at import time, and Settings()
+# reads backend/.env. Without this, the Phase 3/4 mock-pipeline test suite
+# would silently depend on whatever PROCESSOR_MODE a developer's local .env
+# happens to have — pinning it here makes the suite deterministic regardless
+# of local dev configuration (e.g. .env set to PROCESSOR_MODE=super_resolution
+# per Phase 6.1). Tests that specifically exercise SuperResolutionProcessor
+# (test_ai_processor.py) construct/monkeypatch it directly and are unaffected.
+os.environ.setdefault("PROCESSOR_MODE", "mock")
 
 import pytest
 from fastapi.testclient import TestClient

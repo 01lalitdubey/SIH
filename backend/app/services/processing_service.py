@@ -6,16 +6,82 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core import database as db_module
+from app.core.config import get_settings
 from app.models.processing_job import JobStatus, ProcessingJob
 from app.schemas.processing import ProcessingCreateRequest
 from app.services.processors.mock_processor import MockProcessor
 from app.services.satellite import service as satellite_service
 from app.services.satellite.exceptions import SatelliteError
 
-# Single shared instance — MockProcessor holds no per-request state, it just
-# implements BaseProcessor.run(job_id). Swapping in a real processor later
-# means changing this one line.
-_processor = MockProcessor()
+
+def _build_processor():
+    """PROCESSOR_MODE selects the real implementation behind BaseProcessor.
+    'super_resolution' is never silently downgraded to 'mock' — an unknown
+    mode is a startup-time config error, not a quiet fallback. The heavy
+    ai.* / torch import only happens when super_resolution mode is actually
+    requested, so a 'mock'-mode deployment never needs PyTorch installed."""
+    mode = get_settings().processor_mode
+    if mode == "mock":
+        return MockProcessor()
+    if mode == "super_resolution":
+        from app.services.processors.super_resolution_processor import SuperResolutionProcessor
+
+        return SuperResolutionProcessor()
+    raise ValueError(f"Unknown PROCESSOR_MODE '{mode}'. Expected 'mock' or 'super_resolution'.")
+
+
+# Single shared instance — swapping processors is this one call, not a
+# rewrite of ProcessingService. PROCESSOR_MODE is read once at process
+# startup; changing it requires restarting the backend, same as any other
+# env-driven setting in this app.
+_processor = _build_processor()
+
+
+def get_processor_status(processor=None) -> dict:
+    """Real, introspected state of the active processor — used by the
+    /health endpoint (and the frontend, via it) so the UI never has to
+    guess or hardcode whether real AI inference is active. Duck-types on
+    `_engine` instead of `isinstance(processor, SuperResolutionProcessor)`
+    so this never imports that module (and therefore never imports torch)
+    when running in mock mode — see _build_processor's docstring."""
+    processor = _processor if processor is None else processor
+    mode = get_settings().processor_mode
+
+    if not hasattr(processor, "_engine"):
+        return {
+            "processor_mode": mode,
+            "is_mock": True,
+            "processor_ready": True,
+            "model_name": None,
+            "model_version": None,
+            "device": None,
+            "scale_factor": None,
+            "processor_error": None,
+        }
+
+    engine = processor._engine
+    if engine is None:
+        return {
+            "processor_mode": mode,
+            "is_mock": False,
+            "processor_ready": False,
+            "model_name": None,
+            "model_version": None,
+            "device": None,
+            "scale_factor": None,
+            "processor_error": processor._init_error,
+        }
+
+    return {
+        "processor_mode": mode,
+        "is_mock": False,
+        "processor_ready": True,
+        "model_name": engine.checkpoint_metadata.get("model_name", "edsr_satellite"),
+        "model_version": f"scale{engine.scale_factor}x",
+        "device": str(engine.device),
+        "scale_factor": engine.scale_factor,
+        "processor_error": None,
+    }
 
 # A stage marker for AOI-driven jobs, distinct from ProcessingStage.ORDERED
 # (Phase 3/4's five mock stages). The existing frontend's stageKeyToIndex()

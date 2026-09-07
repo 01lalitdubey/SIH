@@ -12,3 +12,9 @@ satellite/*
 !satellite/.gitkeep
 .pytest_cache/
 *.egg-info/
+
+# Phase 6: trained checkpoints are real artifacts of a local training run,
+# not source — too large/environment-specific to commit. Re-generate with
+# `python -m ai.training.train` (see backend/README.md).
+ai/checkpoints/*
+!ai/checkpoints/.gitkeep

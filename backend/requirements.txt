@@ -9,3 +9,14 @@ python-multipart==0.0.20
 Pillow==11.0.0
 httpx==0.28.1
 pytest==8.3.4
+
+# Phase 6: real PyTorch super-resolution inference (PROCESSOR_MODE=super_resolution).
+# Not required when PROCESSOR_MODE=mock (the default) — processing_service.py only
+# imports app/services/processors/super_resolution_processor.py (and therefore torch)
+# when that mode is actually selected.
+# CPU-only install (works everywhere, no GPU needed):
+#   pip install torch
+# CUDA install (optional, for GPU inference/training — pick the wheel matching your
+# driver's CUDA version, see https://pytorch.org/get-started/locally/):
+#   pip install torch --index-url https://download.pytorch.org/whl/cu121
+numpy>=1.24

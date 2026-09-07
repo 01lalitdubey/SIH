@@ -46,6 +46,11 @@ def get_result(job_id: uuid.UUID, db: Session = Depends(get_db)) -> ResultOut:
         output_width=result.output_width,
         output_height=result.output_height,
         created_at=result.created_at,
+        is_mock=result.is_mock,
+        model_name=result.model_name,
+        model_version=result.model_version,
+        device=result.device,
+        metrics_available=result.metrics_available,
     )
 
 

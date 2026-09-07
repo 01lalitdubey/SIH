@@ -15,6 +15,14 @@ def test_health(client):
     body = resp.json()
     assert body["status"] == "ok"
     assert body["database"] == "connected"
+    # Phase 6.1: the health payload is where the frontend learns whether
+    # real AI inference is active — conftest pins PROCESSOR_MODE=mock for
+    # the whole suite, so this reflects that truthfully.
+    assert body["processor_mode"] == "mock"
+    assert body["is_mock"] is True
+    assert body["processor_ready"] is True
+    assert body["model_name"] is None
+    assert body["scale_factor"] is None
 
 
 def test_upload_valid_image(client, sample_image_bytes):

@@ -1,0 +1,17 @@
+# Training-only dependencies — NOT required to run the FastAPI server or
+# serve inference (PROCESSOR_MODE=super_resolution only needs torch, numpy,
+# and Pillow, already in backend/requirements.txt). These are only needed
+# to run `python -m ai.training.train --dataset sen2venus`, which reads the
+# real SEN2VENuS dataset (see ai/datasets/sen2venus.py).
+#
+#   pip install -r ai/requirements-training.txt
+
+tacoreader==2.4.21   # reads the TACO-packaged dataset's sample index (metadata only)
+pandas               # required by tacoreader's legacy (v1) TACO reader
+fsspec               # required by tacoreader.v1 for remote HTTP access
+aiohttp              # fsspec's async HTTP backend
+requests             # fsspec's sync HTTP backend
+tifffile             # decodes the (Geo)TIFF byte ranges fetched per-sample — NOT rasterio/GDAL,
+                     # deliberately: no CRS/reprojection capability, just pixel arrays.
+                     # See docs/ARCHITECTURE.md Phase 6 "Why no rasterio".
+imagecodecs          # codec backend tifffile needs for this dataset's zstd-compressed TIFFs

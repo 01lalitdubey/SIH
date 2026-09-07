@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 
 class ResultOut(BaseModel):
@@ -17,7 +17,13 @@ class ResultOut(BaseModel):
     output_width: int | None
     output_height: int | None
     created_at: datetime
-    is_mock: bool = Field(
-        default=True,
-        description="Always true until Phase 6/7 wire up the real model and evaluation.",
-    )
+    # Phase 6: real, DB-backed — True for MockProcessor results, False for
+    # SuperResolutionProcessor results. No longer a hardcoded default.
+    is_mock: bool
+    model_name: str | None
+    model_version: str | None
+    device: str | None
+    # False whenever psnr/ssim/lpips are null because there was no
+    # ground-truth HR image to compare against (the normal case for real
+    # inference) — never invented in that case. See ai/metrics/image_metrics.py.
+    metrics_available: bool

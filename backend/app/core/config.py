@@ -36,6 +36,19 @@ class Settings(BaseSettings):
     satellite_http_timeout_seconds: float = 30.0
     satellite_max_scenes_considered: int = 20
 
+    # --- Phase 6: AI super-resolution ---------------------------------------
+    # 'mock' (default, safe) or 'super_resolution' (real PyTorch inference).
+    # Never silently falls back from super_resolution to mock — see
+    # app/services/processors/super_resolution_processor.py.
+    processor_mode: str = "mock"
+    sr_checkpoint_path: str = "ai/checkpoints/edsr_satellite.pt"
+    # None = auto-detect (CUDA if available, else CPU) — see ai/inference/infer.py.
+    sr_device: str | None = None
+
+    @property
+    def sr_checkpoint_full_path(self) -> Path:
+        return BACKEND_ROOT / self.sr_checkpoint_path
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
