@@ -7,7 +7,7 @@ upscaler, a satellite-specific super-resolution pipeline.
 
 ## Status
 
-Phases 0–5 of 11 are complete and verified. See [PLAN.md](PLAN.md) for the
+Phases 0–6 of 11 are complete and verified. See [PLAN.md](PLAN.md) for the
 full roadmap and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design.
 
 | Phase | Name | Status |
@@ -18,14 +18,18 @@ full roadmap and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design.
 | 3 | Backend Foundation | ✅ Done |
 | 4 | Frontend ↔ Backend Integration | ✅ Done |
 | 5 | Satellite Data Integration (Copernicus/Sentinel-2) | ✅ Done |
-| 6 | AI Super Resolution | ⬜ Not started |
+| 6 | AI Super Resolution (real PyTorch EDSRLite, wired end-to-end) | ✅ Done |
 | 7 | Geospatial Processing & Evaluation | ⬜ Not started |
 | 8 | Advanced Innovation | ⬜ Not started |
 | 9 | Final SIH Dashboard / Demo | ⬜ Not started |
 | 10 | Testing & Deployment | ⬜ Not started |
 
-Processing (super-resolution) is currently mocked — see
-[Mocked vs Real](#mocked-vs-real) below.
+Super-resolution can now run a real trained PyTorch model
+(`PROCESSOR_MODE=super_resolution`) instead of the mock pipeline — a fresh
+clone still defaults to `mock` (no PyTorch/checkpoint required) so the app
+runs out of the box; see [Mocked vs Real](#mocked-vs-real) below for exactly
+what's real vs. still mocked, and the checkpoint setup step in Quickstart to
+switch a machine over to real mode.
 
 ## Repository structure
 
@@ -62,11 +66,27 @@ cd backend
 python -m venv .venv
 .venv\Scripts\activate        # Windows; `source .venv/bin/activate` on macOS/Linux
 pip install -r requirements.txt
-cp .env.example .env          # SQLite fallback works out of the box
+cp .env.example .env          # SQLite fallback works out of the box, PROCESSOR_MODE=mock by default
 uvicorn app.main:app --reload --port 8000
 ```
 
 API: `http://localhost:8000/api/v1` · Docs: `http://localhost:8000/docs`
+
+The steps above run the app with `PROCESSOR_MODE=mock` (no PyTorch needed) —
+enough to click through the whole app end-to-end. To get **real** AI
+super-resolution instead of the mock pipeline:
+
+```bash
+pip install torch   # CPU build; see backend/README.md for the CUDA install
+```
+
+then set `PROCESSOR_MODE=super_resolution` in `backend/.env` and make sure
+`ai/checkpoints/edsr_satellite.pt` exists — it's gitignored (a trained model
+is a local artifact, not source), so either train your own
+(`python -m ai.training.train --dataset sen2venus`, see backend/README.md
+"Phase 6") or copy a teammate's checkpoint file into that path directly.
+Without a checkpoint, real mode still starts cleanly but fails jobs with a
+clear "model not available" error rather than pretending to work.
 
 **Frontend**
 
@@ -87,23 +107,25 @@ Full setup details, environment variables, and manual test logs are in
 **Frontend:** React, Vite, Tailwind CSS, Framer Motion, React Leaflet, React Router
 **Backend:** FastAPI, SQLAlchemy, PostgreSQL, Pydantic, httpx
 **Satellite:** Copernicus Data Space Ecosystem (Sentinel-2), OAuth2 client credentials
-**Future:** PyTorch (Phase 6), Rasterio/GDAL (Phase 7)
+**AI:** PyTorch — EDSRLite, a real residual CNN trained on the SEN2VENuS Sentinel-2/VENuS dataset
+**Future:** Rasterio/GDAL, georeferencing (Phase 7)
 
 ## Mocked vs Real
 
-| Area | This phase | Future |
-|---|---|---|
-| Satellite search (AOI → Sentinel-2 scenes) | **Real** — live Copernicus catalog search, selection, capped download | Full-scene/band retrieval (Phase 7+) |
-| Super-resolution | Mock (Pillow resize + randomized metrics, flagged `is_mock: true`) | Real PyTorch model (Phase 6) |
-| PSNR / SSIM / LPIPS | Mock (plausible random values) | Computed against ground truth (Phase 7) |
-| Geospatial fidelity (GeoTIFF/CRS) | Not preserved yet | Rasterio/GDAL (Phase 7) |
-| Auth | None (single demo user) | JWT, if required |
+| Area | Status |
+|---|---|
+| Satellite search (AOI → Sentinel-2 scenes) | **Real** — live Copernicus catalog search, ranking, selection; download live-verified up through scene selection (see backend/README.md "Phase 6.3" for the current account-side blocker on bulk download) |
+| Super-resolution | **Real** when `PROCESSOR_MODE=super_resolution` — trained EDSRLite model, real tensor inference, `is_mock: false`. Defaults to `PROCESSOR_MODE=mock` (Pillow resize + randomized metrics) on a fresh clone, so it runs with no PyTorch/checkpoint required |
+| PSNR / SSIM / LPIPS | Real when computed (training/validation, against held-out data) — `null` for a live inference job, since there's no ground-truth HR image to score against; the UI says so honestly rather than showing zeros |
+| Geospatial fidelity (GeoTIFF/CRS) | Not preserved yet — planned for Phase 7 (Rasterio/GDAL) |
+| Auth | None (single demo user) — JWT planned if required |
 
 Full breakdown in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Testing
 
 ```bash
-cd backend && pytest        # 39 tests, SQLite-backed, no Docker required
-cd frontend && npm run build
+cd backend && pytest        # 71 tests, SQLite-backed, no Docker required
+                             # (AI-related tests skip automatically if torch isn't installed)
+cd frontend && npm run build && npm run lint
 ```
